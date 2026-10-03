@@ -1,0 +1,4 @@
+ALTER TABLE agents
+ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE INDEX IF NOT EXISTS idx_agents_is_admin ON agents(is_admin);

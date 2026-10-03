@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package waybill.v1;
+
+option go_package = "github.com/nurtw/escrow/proto/v1;waybillv1";
+
+service WaybillService {
+  rpc CreateWaybill (CreateWaybillRequest) returns (CreateWaybillResponse);
+  rpc ValidatePin (ValidatePinRequest) returns (ValidatePinResponse);
+  rpc DisbursePayout (DisbursePayoutRequest) returns (DisbursePayoutResponse);
+  rpc TriggerDispute (TriggerDisputeRequest) returns (TriggerDisputeResponse);
+}
+
+enum WaybillState {
+  WAYBILL_STATE_UNSPECIFIED = 0;
+  WAYBILL_STATE_CREATED = 1;
+  WAYBILL_STATE_ESCROW_LOCKED = 2;
+  WAYBILL_STATE_IN_TRANSIT = 3;
+  WAYBILL_STATE_DELIVERED = 4;
+  WAYBILL_STATE_DISBURSED = 5;
+  WAYBILL_STATE_DISPUTE_HOLD = 6;
+  WAYBILL_STATE_UNCLAIMED_HOLD = 7;
+}
+
+message CreateWaybillRequest {
+  string agent_id = 1;
+  string sender_phone = 2;
+  string receiver_phone = 3;
+  string driver_phone = 4;
+  string vehicle_reg_number = 5;
+  string origin_park_id = 6;
+  string destination_park_id = 7;
+  int64 total_freight_kobo = 8;
+  string driver_account_number = 9;
+  string driver_bank_code = 10;
+  string driver_declared_name = 11;
+}
+
+message CreateWaybillResponse {
+  string waybill_id = 1;
+  string secret_pin = 2;
+  WaybillState state = 3;
+  int64 agent_remaining_balance_kobo = 4;
+  string resolved_driver_account_name = 5;
+  double name_match_confidence = 6;
+}
+
+message ValidatePinRequest {
+  string waybill_id = 1;
+  string pin = 2;
+  string channel = 3;
+}
+
+message ValidatePinResponse {
+  bool success = 1;
+  string message = 2;
+  WaybillState new_state = 3;
+}
+
+message DisbursePayoutRequest {
+  string waybill_id = 1;
+  string idempotency_key = 2;
+}
+
+message DisbursePayoutResponse {
+  bool success = 1;
+  string transaction_reference = 2;
+  int64 driver_amount_kobo = 3;
+  int64 agent_amount_kobo = 4;
+  int64 union_amount_kobo = 5;
+  int64 treasury_amount_kobo = 6;
+}
+
+message TriggerDisputeRequest {
+  string waybill_id = 1;
+  string triggered_by = 2;
+  string reason = 3;
+}
+
+message TriggerDisputeResponse {
+  string waybill_id = 1;
+  WaybillState state = 2;
+  string dispute_ticket_id = 3;
+}

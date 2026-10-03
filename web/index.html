@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0b3d2e" />
+  <title>NURTW Agent</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="manifest" href="manifest.json" />
+</head>
+<body>
+  <main class="card">
+    <h1>NURTW Agent</h1>
+    <p class="sub">Park clerk</p>
+
+    <div id="loginPanel">
+      <label>Phone</label>
+      <input id="phone" type="tel" placeholder="eg. 0803..." autocomplete="username" />
+      <label>Password</label>
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
+      <button id="loginBtn" type="button">Login</button>
+    </div>
+
+    <p id="msg" class="msg"></p>
+
+    <section id="home" class="home hidden">
+      <h2>Wallet</h2>
+      <p id="balance">—</p>
+      <p id="agentName"></p>
+
+      <h2>Book waybill</h2>
+      <label>Sender phone</label>
+      <input id="senderPhone" type="tel" placeholder="eg. 0803..." />
+      <label>Receiver phone</label>
+      <input id="receiverPhone" type="tel" placeholder="eg. 0803..." />
+      <label>Driver phone</label>
+      <input id="driverPhone" type="tel" placeholder="0803..." />
+      <label>Vehicle reg</label>
+      <input id="vehicleReg" type="text" placeholder="eg. ABC-123XY" />
+      <label>Origin park</label>
+      <select id="originPark"></select>
+      <label>Destination park</label>
+      <select id="destPark"></select>
+      <label>Freight (naira)</label>
+      <input id="freightNaira" type="number" min="1" step="1" placeholder="eg. 5000" />
+      <label>Driver account (10 digits)</label>
+      <input id="driverAccount" type="text" maxlength="10" placeholder="eg. 0123456789" />
+      <label>Bank code</label>
+      <input id="driverBank" type="text" placeholder="eg. 058" />
+      <label>Driver name (as on account)</label>
+      <input id="driverName" type="text" placeholder="Resolve to fill" />
+      <button id="resolveBtn" type="button" class="secondary">Resolve bank account</button>
+      <p id="resolveResult" class="sub"></p>
+      <button id="bookBtn" type="button">Book & lock escrow</button>
+      <p id="bookResult" class="sub"></p>
+
+      <h2>My waybills</h2>
+      <button id="refreshWaybillsBtn" type="button">Refresh list</button>
+      <div id="waybillList" class="waybill-list"></div>
+
+      <button id="logoutBtn" type="button" class="secondary">Logout</button>
+    </section>
+  </main>
+  <script src="app.js?v=5"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "name": "NURTW Agent",
+  "short_name": "NURTW",
+  "start_url": "/app/",
+  "display": "standalone",
+  "background_color": "#0b3d2e",
+  "theme_color": "#0b3d2e"
+}
