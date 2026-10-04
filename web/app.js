@@ -26,7 +26,6 @@ async function loadParks() {
   const origin = $("originPark");
   const dest = $("destPark");
   if (!origin || !dest) return;
-
   const res = await fetch(API + "/api/v1/parks");
   if (!res.ok) throw new Error("Could not load parks");
   const parks = await res.json();
@@ -91,7 +90,6 @@ async function loadProfile() {
   });
   if (!res.ok) throw new Error("Session expired — login again");
   const agent = await res.json();
-
   if ($("balance")) $("balance").textContent = naira(agent.wallet_balance_kobo);
   if ($("agentName")) {
     $("agentName").textContent =
@@ -99,7 +97,6 @@ async function loadProfile() {
   }
   if ($("loginPanel")) $("loginPanel").classList.add("hidden");
   if ($("home")) $("home").classList.remove("hidden");
-
   await loadParks();
   await loadWaybills();
 }
@@ -108,7 +105,6 @@ async function resolveDriver() {
   const account = ($("driverAccount") && $("driverAccount").value.trim()) || "";
   const bank = ($("driverBank") && $("driverBank").value.trim()) || "";
   const declared = ($("driverName") && $("driverName").value.trim()) || "Driver";
-
   const res = await fetch(API + "/api/v1/bank/resolve", {
     method: "POST",
     headers: {
@@ -124,9 +120,7 @@ async function resolveDriver() {
   const data = await res.json().catch(function () {
     return {};
   });
-  if (!res.ok) {
-    throw new Error(data.message || data.error || "Resolve failed");
-  }
+  if (!res.ok) throw new Error(data.message || data.error || "Resolve failed");
   return data;
 }
 
@@ -144,7 +138,6 @@ async function bookWaybill() {
     driver_bank_code: ($("driverBank") && $("driverBank").value.trim()) || "",
     driver_declared_name: ($("driverName") && $("driverName").value.trim()) || "",
   };
-
   const res = await fetch(API + "/api/v1/waybills", {
     method: "POST",
     headers: {
@@ -160,12 +153,34 @@ async function bookWaybill() {
   return data;
 }
 
+async function verifyPin() {
+  const waybillId = ($("pinWaybillId") && $("pinWaybillId").value.trim()) || "";
+  const pin = ($("pinCode") && $("pinCode").value.trim()) || "";
+  const res = await fetch(API + "/api/v1/waybills/verify-pin", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + token(),
+    },
+    body: JSON.stringify({
+      waybill_id: waybillId,
+      pin: pin,
+    }),
+  });
+  const data = await res.json().catch(function () {
+    return {};
+  });
+  if (!res.ok) throw new Error(data.error || data.message || "PIN verification failed");
+  return data;
+}
+
 function bind() {
   const loginBtn = $("loginBtn");
   const logoutBtn = $("logoutBtn");
   const refreshWaybillsBtn = $("refreshWaybillsBtn");
   const bookBtn = $("bookBtn");
   const resolveBtn = $("resolveBtn");
+  const verifyPinBtn = $("verifyPinBtn");
 
   if (loginBtn) {
     loginBtn.addEventListener("click", async function () {
@@ -203,6 +218,7 @@ function bind() {
       if ($("waybillList")) $("waybillList").innerHTML = "";
       if ($("bookResult")) $("bookResult").textContent = "";
       if ($("resolveResult")) $("resolveResult").textContent = "";
+      if ($("pinResult")) $("pinResult").textContent = "";
       setMsg("Logged out", true);
     });
   }
@@ -255,6 +271,8 @@ function bind() {
           $("bookResult").textContent =
             "Booked " + id + (pin ? " · PIN " + pin : "") + " (show PIN only to receiver)";
         }
+        if (id && $("pinWaybillId")) $("pinWaybillId").value = id;
+        if (pin && $("pinCode")) $("pinCode").value = pin;
         setMsg("Waybill locked in escrow", true);
         await loadProfile();
       } catch (e) {
@@ -262,6 +280,32 @@ function bind() {
         setMsg(e.message || "Booking failed");
       } finally {
         bookBtn.disabled = false;
+      }
+    });
+  }
+
+  if (verifyPinBtn) {
+    verifyPinBtn.addEventListener("click", async function () {
+      setMsg("");
+      verifyPinBtn.disabled = true;
+      if ($("pinResult")) $("pinResult").textContent = "Verifying…";
+      try {
+        const data = await verifyPin();
+        if ($("pinResult")) {
+          $("pinResult").textContent =
+            (data.message || "PIN verified") +
+            (data.waybill_id ? " · " + data.waybill_id : "") +
+            (data.state || data.current_state
+              ? " · " + (data.state || data.current_state)
+              : "");
+        }
+        setMsg("Parcel marked DELIVERED", true);
+        await loadWaybills();
+      } catch (e) {
+        if ($("pinResult")) $("pinResult").textContent = "";
+        setMsg(e.message || "PIN verification failed");
+      } finally {
+        verifyPinBtn.disabled = false;
       }
     });
   }

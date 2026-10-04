@@ -15,7 +15,7 @@
 
     <div id="loginPanel">
       <label>Phone</label>
-      <input id="phone" type="tel" placeholder="eg. 0803..." autocomplete="username" />
+      <input id="phone" type="tel" placeholder="08031234567" autocomplete="username" />
       <label>Password</label>
       <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
       <button id="loginBtn" type="button">Login</button>
@@ -30,29 +30,37 @@
 
       <h2>Book waybill</h2>
       <label>Sender phone</label>
-      <input id="senderPhone" type="tel" placeholder="eg. 0803..." />
+      <input id="senderPhone" type="tel" placeholder="0803..." />
       <label>Receiver phone</label>
-      <input id="receiverPhone" type="tel" placeholder="eg. 0803..." />
+      <input id="receiverPhone" type="tel" placeholder="0803..." />
       <label>Driver phone</label>
       <input id="driverPhone" type="tel" placeholder="0803..." />
       <label>Vehicle reg</label>
-      <input id="vehicleReg" type="text" placeholder="eg. ABC-123XY" />
+      <input id="vehicleReg" type="text" placeholder="ABC-123XY" />
       <label>Origin park</label>
       <select id="originPark"></select>
       <label>Destination park</label>
       <select id="destPark"></select>
       <label>Freight (naira)</label>
-      <input id="freightNaira" type="number" min="1" step="1" placeholder="eg. 5000" />
+      <input id="freightNaira" type="number" min="1" step="1" placeholder="5000" />
       <label>Driver account (10 digits)</label>
-      <input id="driverAccount" type="text" maxlength="10" placeholder="eg. 0123456789" />
+      <input id="driverAccount" type="text" maxlength="10" placeholder="0021938800" />
       <label>Bank code</label>
-      <input id="driverBank" type="text" placeholder="eg. 058" />
+      <input id="driverBank" type="text" placeholder="058" />
       <label>Driver name (as on account)</label>
       <input id="driverName" type="text" placeholder="Resolve to fill" />
       <button id="resolveBtn" type="button" class="secondary">Resolve bank account</button>
       <p id="resolveResult" class="sub"></p>
       <button id="bookBtn" type="button">Book & lock escrow</button>
       <p id="bookResult" class="sub"></p>
+
+      <h2>Verify PIN (delivery)</h2>
+      <label>Waybill ID</label>
+      <input id="pinWaybillId" type="text" placeholder="WB-ce517002" />
+      <label>4-digit PIN</label>
+      <input id="pinCode" type="password" maxlength="4" placeholder="2032" />
+      <button id="verifyPinBtn" type="button">Verify PIN & mark delivered</button>
+      <p id="pinResult" class="sub"></p>
 
       <h2>My waybills</h2>
       <button id="refreshWaybillsBtn" type="button">Refresh list</button>
@@ -61,6 +69,6 @@
       <button id="logoutBtn" type="button" class="secondary">Logout</button>
     </section>
   </main>
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>
