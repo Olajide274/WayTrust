@@ -45,8 +45,34 @@
       <input id="freightNaira" type="number" min="1" step="1" placeholder="5000" />
       <label>Driver account (10 digits)</label>
       <input id="driverAccount" type="text" maxlength="10" placeholder="0021938800" />
-      <label>Bank code</label>
-      <input id="driverBank" type="text" placeholder="058" />
+      <label>Bank</label>
+      <select id="driverBank">
+        <option value="">Select bank</option>
+        <option value="058">GTBank</option>
+        <option value="044">Access Bank</option>
+        <option value="033">UBA</option>
+        <option value="011">First Bank</option>
+        <option value="057">Zenith Bank</option>
+        <option value="032">Union Bank</option>
+        <option value="221">Stanbic IBTC</option>
+        <option value="050">Ecobank</option>
+        <option value="070">Fidelity Bank</option>
+        <option value="076">Polaris Bank</option>
+        <option value="082">Keystone Bank</option>
+        <option value="215">Unity Bank</option>
+        <option value="035">Wema Bank</option>
+        <option value="030">Heritage Bank</option>
+        <option value="101">Providus Bank</option>
+        <option value="100">Suntrust</option>
+        <option value="999">OPay</option>
+        <option value="120001">PalmPay</option>
+        <option value="50515">Moniepoint</option>
+        <option value="__other__">Other (enter bank code)</option>
+      </select>
+      <div id="otherBankWrap" class="hidden">
+        <label>Bank code (if Other)</label>
+        <input id="driverBankOther" type="text" maxlength="6" placeholder="e.g. 058" />
+      </div>
       <label>Driver name (as on account)</label>
       <input id="driverName" type="text" placeholder="Resolve to fill" />
       <button id="resolveBtn" type="button" class="secondary">Resolve bank account</button>
@@ -56,9 +82,9 @@
 
       <h2>Verify PIN (delivery)</h2>
       <label>Waybill ID</label>
-      <input id="pinWaybillId" type="text" placeholder="WB-ce517002" />
+      <input id="pinWaybillId" type="text" placeholder="WB-..." />
       <label>4-digit PIN</label>
-      <input id="pinCode" type="password" maxlength="4" placeholder="2032" />
+      <input id="pinCode" type="password" maxlength="4" placeholder="1234" />
       <button id="verifyPinBtn" type="button">Verify PIN & mark delivered</button>
       <p id="pinResult" class="sub"></p>
 
@@ -69,6 +95,6 @@
       <button id="logoutBtn" type="button" class="secondary">Logout</button>
     </section>
   </main>
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=9"></script>
 </body>
 </html>

@@ -22,6 +22,15 @@ function naira(kobo) {
   });
 }
 
+function selectedBankCode() {
+  const sel = $("driverBank");
+  if (!sel) return "";
+  if (sel.value === "__other__") {
+    return ($("driverBankOther") && $("driverBankOther").value.trim()) || "";
+  }
+  return sel.value;
+}
+
 async function loadParks() {
   const origin = $("originPark");
   const dest = $("destPark");
@@ -103,8 +112,10 @@ async function loadProfile() {
 
 async function resolveDriver() {
   const account = ($("driverAccount") && $("driverAccount").value.trim()) || "";
-  const bank = ($("driverBank") && $("driverBank").value.trim()) || "";
+  const bank = selectedBankCode();
   const declared = ($("driverName") && $("driverName").value.trim()) || "Driver";
+  if (!bank) throw new Error("Select a bank or enter a bank code");
+
   const res = await fetch(API + "/api/v1/bank/resolve", {
     method: "POST",
     headers: {
@@ -126,6 +137,9 @@ async function resolveDriver() {
 
 async function bookWaybill() {
   const freightNaira = Number(($("freightNaira") && $("freightNaira").value) || 0);
+  const bank = selectedBankCode();
+  if (!bank) throw new Error("Select a bank or enter a bank code");
+
   const body = {
     sender_phone: ($("senderPhone") && $("senderPhone").value.trim()) || "",
     receiver_phone: ($("receiverPhone") && $("receiverPhone").value.trim()) || "",
@@ -135,9 +149,10 @@ async function bookWaybill() {
     destination_park_id: ($("destPark") && $("destPark").value) || "",
     total_freight_kobo: Math.round(freightNaira * 100),
     driver_account_number: ($("driverAccount") && $("driverAccount").value.trim()) || "",
-    driver_bank_code: ($("driverBank") && $("driverBank").value.trim()) || "",
+    driver_bank_code: bank,
     driver_declared_name: ($("driverName") && $("driverName").value.trim()) || "",
   };
+
   const res = await fetch(API + "/api/v1/waybills", {
     method: "POST",
     headers: {
@@ -181,6 +196,16 @@ function bind() {
   const bookBtn = $("bookBtn");
   const resolveBtn = $("resolveBtn");
   const verifyPinBtn = $("verifyPinBtn");
+  const driverBank = $("driverBank");
+
+  if (driverBank) {
+    driverBank.addEventListener("change", function () {
+      const wrap = $("otherBankWrap");
+      if (!wrap) return;
+      if (driverBank.value === "__other__") wrap.classList.remove("hidden");
+      else wrap.classList.add("hidden");
+    });
+  }
 
   if (loginBtn) {
     loginBtn.addEventListener("click", async function () {
