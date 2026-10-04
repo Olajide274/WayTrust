@@ -4,3 +4,4 @@ bin/
 .env
 *.exe
 bin/
+node_modules/
