@@ -13,6 +13,47 @@ export class ApiError extends Error {
   }
 }
 
+export type AgentProfile = {
+  full_name?: string;
+  phone_number?: string;
+  park_id?: string;
+  wallet_balance_kobo: number;
+  is_admin?: boolean;
+};
+
+export type Park = {
+  id: string;
+  name: string;
+  city: string;
+};
+
+export type CreateWaybillInput = {
+  sender_phone: string;
+  receiver_phone: string;
+  driver_phone: string;
+  vehicle_reg_number: string;
+  origin_park_id: string;
+  destination_park_id: string;
+  total_freight_kobo: number;
+  driver_account_number: string;
+  driver_bank_code: string;
+  driver_declared_name: string;
+};
+
+export type CreatedWaybill = {
+  waybill_id: string;
+  secret_pin: string;
+  agent_remaining_balance_kobo: number;
+};
+
+type CreateWaybillResponse = {
+  WaybillID: string;
+  SecretPin: string;
+  AgentRemainingBalance: number;
+};
+
+export const PROFILE_REFRESH_EVENT = "nurtw:profile-refresh";
+
 export function hasAuthToken(): boolean {
   return (
     typeof window !== "undefined" &&
@@ -95,4 +136,26 @@ export async function apiRequest<T>(
   }
 
   return payload as T;
+}
+
+export function getAgentProfile(): Promise<AgentProfile> {
+  return apiRequest<AgentProfile>("/api/v1/agent/profile");
+}
+
+export function getParks(): Promise<Park[]> {
+  return apiRequest<Park[]>("/api/v1/parks");
+}
+
+export function createWaybill(
+  input: CreateWaybillInput,
+): Promise<CreatedWaybill> {
+  return apiRequest<CreateWaybillResponse>("/api/v1/waybills", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  }).then((response) => ({
+    waybill_id: response.WaybillID,
+    secret_pin: response.SecretPin,
+    agent_remaining_balance_kobo: response.AgentRemainingBalance,
+  }));
 }
