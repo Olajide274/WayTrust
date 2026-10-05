@@ -5,3 +5,5 @@ bin/
 *.exe
 bin/
 node_modules/
+
+.dev.env
