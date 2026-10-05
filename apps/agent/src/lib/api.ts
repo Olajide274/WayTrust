@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export const AUTH_TOKEN_KEY = "nurtw_token";
 const AUTH_CHANGE_EVENT = "nurtw:auth-change";
@@ -25,6 +25,25 @@ export type Park = {
   id: string;
   name: string;
   city: string;
+};
+
+export type AgentWaybill = {
+  id: string;
+  agent_id: string;
+  sender_phone: string;
+  receiver_phone: string;
+  driver_phone: string;
+  vehicle_reg_number: string;
+  origin_park_id: string;
+  destination_park_id: string;
+  total_freight_kobo: number;
+  current_state: string;
+  driver_verified_name: string;
+  created_at: string;
+  driver_payout_kobo: number;
+  agent_commission_kobo: number;
+  union_dues_kobo: number;
+  platform_treasury_kobo: number;
 };
 
 export type CreateWaybillInput = {
@@ -144,6 +163,10 @@ export function getAgentProfile(): Promise<AgentProfile> {
 
 export function getParks(): Promise<Park[]> {
   return apiRequest<Park[]>("/api/v1/parks");
+}
+
+export function getAgentWaybills(): Promise<AgentWaybill[]> {
+  return apiRequest<AgentWaybill[]>("/api/v1/agent/waybills");
 }
 
 export function createWaybill(

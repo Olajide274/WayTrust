@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ApiError,
   getAgentProfile,
+  getAgentWaybills,
+  getParks,
   PROFILE_REFRESH_EVENT,
+  type AgentWaybill,
   type AgentProfile,
 } from "@/lib/api";
 
@@ -23,6 +26,10 @@ export default function HomePage() {
   const [agent, setAgent] = useState<AgentProfile | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [waybills, setWaybills] = useState<AgentWaybill[]>([]);
+  const [waybillsError, setWaybillsError] = useState("");
+  const [waybillsLoading, setWaybillsLoading] = useState(true);
+  const [parkNames, setParkNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const token = localStorage.getItem("nurtw_token");
@@ -58,6 +65,58 @@ export default function HomePage() {
       window.removeEventListener(PROFILE_REFRESH_EVENT, loadProfile);
     };
   }, [router]);
+
+  const loadWaybills = useCallback(async () => {
+    setWaybillsLoading(true);
+    setWaybillsError("");
+    try {
+      setWaybills(await getAgentWaybills());
+    } catch (requestError) {
+      if (requestError instanceof ApiError && requestError.status === 401) {
+        router.replace("/");
+        return;
+      }
+      setWaybillsError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Could not load your waybills.",
+      );
+    } finally {
+      setWaybillsLoading(false);
+    }
+  }, [router]);
+
+  useEffect(() => {
+    if (!localStorage.getItem("nurtw_token")) {
+      router.replace("/");
+      return;
+    }
+
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (active) return loadWaybills();
+    });
+    getParks()
+      .then((parks) => {
+        if (!active) return;
+        setParkNames(
+          Object.fromEntries(parks.map((park) => [park.id, park.name])),
+        );
+      })
+      .catch((requestError: unknown) => {
+        if (
+          active &&
+          requestError instanceof ApiError &&
+          requestError.status === 401
+        ) {
+          router.replace("/");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [loadWaybills, router]);
 
   function logout() {
     localStorage.removeItem("nurtw_token");
@@ -119,14 +178,73 @@ export default function HomePage() {
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">Waybills</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Create a new escrow-backed waybill.
+            Book a waybill or verify a delivery PIN.
           </p>
-          <Link
-            href="/waybills/new"
-            className="mt-5 inline-flex w-full items-center justify-center rounded-lg bg-emerald-700 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-emerald-800"
-          >
-            Book waybill
-          </Link>
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Link
+              href="/waybills/new"
+              className="inline-flex w-full items-center justify-center rounded-lg bg-emerald-700 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-emerald-800"
+            >
+              Book waybill
+            </Link>
+            <Link
+              href="/waybills/deliver"
+              className="inline-flex w-full items-center justify-center rounded-lg border border-emerald-700 px-4 py-3 text-sm font-medium text-emerald-800 transition-colors hover:bg-emerald-50"
+            >
+              Verify PIN
+            </Link>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-slate-900">My waybills</h2>
+          {waybillsLoading ? (
+            <p className="mt-4 text-sm text-slate-500">
+              Loading your waybills…
+            </p>
+          ) : waybillsError ? (
+            <div className="mt-4">
+              <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">
+                {waybillsError}
+              </p>
+              <button
+                type="button"
+                onClick={() => void loadWaybills()}
+                className="mt-3 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Retry
+              </button>
+            </div>
+          ) : waybills.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-500">
+              No waybills yet. Book a waybill to see it here.
+            </p>
+          ) : (
+            <ul className="mt-4 divide-y divide-slate-100">
+              {waybills.map((waybill) => (
+                <li key={waybill.id} className="py-4 first:pt-0 last:pb-0">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="break-all text-sm font-semibold text-slate-900">
+                      {waybill.id}
+                    </p>
+                    <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+                      {waybill.current_state}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm font-medium text-slate-800">
+                    {naira(waybill.total_freight_kobo)}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {parkNames[waybill.origin_park_id] ||
+                      waybill.origin_park_id}{" "}
+                    →{" "}
+                    {parkNames[waybill.destination_park_id] ||
+                      waybill.destination_park_id}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       </motion.div>
     </main>
