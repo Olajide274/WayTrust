@@ -1,10 +1,12 @@
-# NURTW Digital Waybill & Escrow
+# WayTrust — Digital Waybill & Escrow
 
-Production-oriented **digital waybill escrow** for Nigerian motor parks (NURTW corridors).
+Production-oriented **digital waybill escrow** for Nigerian motor parks and inter-state corridors.
 
 Park agents lock freight into escrow at booking. On delivery, the receiver releases a **4-digit PIN**. Funds are then eligible for split disbursement to **driver**, **agent**, **union**, and **platform** via Paystack.
 
 > Not a hobby demo: real PostgreSQL, JWT auth, ledger constraints, state machine, and live Paystack resolve/transfer paths (transfer success depends on funded Paystack balance).
+
+**WayTrust** is operator-neutral software for waybill escrow. It can serve NURTW and other park networks; it is not an official union product unless a formal agreement says otherwise.
 
 ---
 
@@ -63,7 +65,7 @@ Disbursement is **only** allowed from `DELIVERED` (enforced in domain + service)
 ## Repository layout
 
 ```text
-nurtw-escrow/
+waytrust/   # (repo may still be named nurtw-escrow until renamed)
 ├── cmd/server/          # Main process (REST, gRPC, static /app)
 ├── internal/
 │   ├── domain/          # States, fee calculator, state helpers + tests
@@ -147,7 +149,7 @@ Amounts are always **integer kobo**.
 ### Environment
 
 ```bash
-export JWT_SECRET=nurtw-local-dev-secret-change-in-production
+export JWT_SECRET=waytrust-local-dev-secret-change-in-production
 export PAYSTACK_SECRET_KEY=sk_test_xxxxxxxx
 # optional:
 # export APP_ENV=development
@@ -157,7 +159,7 @@ export PAYSTACK_SECRET_KEY=sk_test_xxxxxxxx
 Windows CMD:
 
 ```cmd
-set JWT_SECRET=nurtw-local-dev-secret-change-in-production
+set JWT_SECRET=waytrust-local-dev-secret-change-in-production
 set PAYSTACK_SECRET_KEY=sk_test_xxxxxxxx
 ```
 
@@ -165,7 +167,7 @@ set PAYSTACK_SECRET_KEY=sk_test_xxxxxxxx
 
 ### Database
 
-Apply migrations under `migrations/` to a database (e.g. `nurtw_escrow`).
+Apply migrations under `migrations/` to a database (e.g. `waytrust` or existing `nurtw_escrow` during transition).
 
 ### Run API
 
@@ -230,6 +232,7 @@ Driver payout is the **escrowed driver share**, aligned with park SOP—not an u
 - [x] Thin PWA proof
 - [ ] Sleek Next.js agent UI (white enterprise, multi-step, Framer Motion)
 - [ ] Funded Paystack test → full disburse success in staging
+- [ ] Exception workflows (cancel, dispute, unclaimed, refund)
 - [ ] USSD aggregator integration
 - [ ] SMS PIN delivery
 - [ ] CI, staging parity, runbooks
@@ -238,12 +241,12 @@ Driver payout is the **escrowed driver share**, aligned with park SOP—not an u
 
 ## License / operators
 
-Intended for authorized NURTW / park operators and integrators.
+Intended for authorized park operators and integrators.
 Deploy only with proper agreements, KYC, and payment-provider compliance.
+WayTrust is not affiliated with any union unless a written contract establishes that relationship.
 
 ---
 
 ## Author
 
 Built as a real-world corridor escrow system for Nigerian motor parks.
-```
