@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
+import { PRODUCT_NAME } from "@/lib/branding";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -65,7 +66,7 @@ export default function DeliverPage() {
           Back to home
         </Link>
         <p className="mt-4 text-xs font-medium uppercase tracking-wide text-emerald-700">
-          NURTW Escrow
+          {PRODUCT_NAME}
         </p>
         <h1 className="text-2xl font-semibold text-slate-900">Verify delivery PIN</h1>
         <p className="mt-1 text-sm text-slate-500">

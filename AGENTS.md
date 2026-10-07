@@ -1,4 +1,6 @@
-# nurtw-escrow
+# WayTrust
+
+Formerly known as nurtw-escrow.
 
 Escrow/waybill system for park clerks (agents).
 

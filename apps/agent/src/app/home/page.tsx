@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
+import { PRODUCT_NAME } from "@/lib/branding";
 import {
   ApiError,
   getAgentProfile,
@@ -142,7 +143,7 @@ export default function HomePage() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">
-              NURTW Escrow
+              {PRODUCT_NAME}
             </p>
             <h1 className="text-2xl font-semibold text-slate-900">Home</h1>
           </div>

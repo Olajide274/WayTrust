@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
+import { PRODUCT_NAME } from "@/lib/branding";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -46,7 +47,7 @@ export default function LoginPage() {
         className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-sm p-8"
       >
         <p className="text-xs font-medium tracking-wide text-emerald-700 uppercase mb-2">
-          NURTW Escrow
+          {PRODUCT_NAME}
         </p>
         <h1 className="text-2xl font-semibold text-slate-900 mb-1">
           Agent sign in

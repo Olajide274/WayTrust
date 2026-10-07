@@ -3,10 +3,35 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
 export const AUTH_TOKEN_KEY = "nurtw_token";
 const AUTH_CHANGE_EVENT = "nurtw:auth-change";
 
+export const BANK_OPTIONS = [
+  { name: "Access Bank", code: "044" },
+  { name: "Ecobank", code: "050" },
+  { name: "FCMB", code: "214" },
+  { name: "Fidelity Bank", code: "070" },
+  { name: "First Bank", code: "011" },
+  { name: "GTBank", code: "058" },
+  { name: "Keystone Bank", code: "082" },
+  { name: "Kuda Bank", code: "50211" },
+  { name: "Moniepoint MFB", code: "50515" },
+  { name: "OPay", code: "999992" },
+  { name: "PalmPay", code: "999991" },
+  { name: "Polaris Bank", code: "076" },
+  { name: "Stanbic IBTC", code: "221" },
+  { name: "Sterling Bank", code: "232" },
+  ...(process.env.NODE_ENV !== "production"
+    ? [{ name: "Test bank (001)", code: "001" }]
+    : []),
+  { name: "UBA", code: "033" },
+  { name: "Union Bank", code: "032" },
+  { name: "Wema Bank", code: "035" },
+  { name: "Zenith Bank", code: "057" },
+];
+
 export class ApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    public readonly responseBody?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
@@ -59,6 +84,19 @@ export type CreateWaybillInput = {
   driver_declared_name: string;
 };
 
+export type ResolveBankAccountInput = {
+  account_number: string;
+  bank_code: string;
+  declared_name: string;
+};
+
+export type BankAccountResolution = {
+  verified: boolean;
+  resolved_name: string;
+  confidence_score: number;
+  message?: string;
+};
+
 export type CreatedWaybill = {
   waybill_id: string;
   secret_pin: string;
@@ -102,6 +140,15 @@ function getErrorMessage(payload: unknown, fallback: string): string {
     typeof payload.error === "string"
   ) {
     return payload.error;
+  }
+
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "message" in payload &&
+    typeof payload.message === "string"
+  ) {
+    return payload.message;
   }
 
   return fallback;
@@ -151,10 +198,48 @@ export async function apiRequest<T>(
     throw new ApiError(
       getErrorMessage(payload, `Request failed (${response.status})`),
       response.status,
+      payload,
     );
   }
 
   return payload as T;
+}
+
+function isBankAccountResolution(
+  payload: unknown,
+): payload is BankAccountResolution {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    "verified" in payload &&
+    typeof payload.verified === "boolean" &&
+    "resolved_name" in payload &&
+    typeof payload.resolved_name === "string" &&
+    "confidence_score" in payload &&
+    typeof payload.confidence_score === "number" &&
+    (!("message" in payload) || typeof payload.message === "string")
+  );
+}
+
+export async function resolveBankAccount(
+  input: ResolveBankAccountInput,
+): Promise<BankAccountResolution> {
+  try {
+    return await apiRequest<BankAccountResolution>("/api/v1/bank/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  } catch (requestError) {
+    if (
+      requestError instanceof ApiError &&
+      requestError.status === 422 &&
+      isBankAccountResolution(requestError.responseBody)
+    ) {
+      return requestError.responseBody;
+    }
+    throw requestError;
+  }
 }
 
 export function getAgentProfile(): Promise<AgentProfile> {

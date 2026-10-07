@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import { PRODUCT_NAME } from "@/lib/branding";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "NURTW Agent",
+  title: `${PRODUCT_NAME} Agent`,
   description: "Park clerk escrow console",
 };
 

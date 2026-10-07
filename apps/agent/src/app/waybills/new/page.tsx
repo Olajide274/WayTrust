@@ -3,12 +3,16 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { PRODUCT_NAME } from "@/lib/branding";
 import {
   ApiError,
+  BANK_OPTIONS,
   createWaybill,
   getParks,
   hasAuthToken,
   PROFILE_REFRESH_EVENT,
+  resolveBankAccount,
+  type BankAccountResolution,
   type CreatedWaybill,
   type Park,
 } from "@/lib/api";
@@ -44,6 +48,19 @@ function naira(kobo: number): string {
     style: "currency",
     currency: "NGN",
   });
+}
+
+function getBankDetailsKey(
+  form: Pick<
+    FormValues,
+    "driverAccountNumber" | "driverBankCode" | "driverDeclaredName"
+  >,
+): string {
+  return JSON.stringify([
+    form.driverAccountNumber.trim(),
+    form.driverBankCode.trim(),
+    form.driverDeclaredName.trim(),
+  ]);
 }
 
 function validateForm(
@@ -157,6 +174,15 @@ export default function NewWaybillPage() {
   const [form, setForm] = useState<FormValues>(initialForm);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [resolvingAccount, setResolvingAccount] = useState(false);
+  const [accountResolution, setAccountResolution] = useState<{
+    key: string;
+    result: BankAccountResolution;
+  } | null>(null);
+  const [accountResolutionError, setAccountResolutionError] = useState<{
+    key: string;
+    message: string;
+  } | null>(null);
   const [result, setResult] = useState<CreatedWaybill | null>(null);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState("");
@@ -215,6 +241,62 @@ export default function NewWaybillPage() {
 
   function updateField(name: keyof FormValues, value: string) {
     setForm((current) => ({ ...current, [name]: value }));
+    if (
+      name === "driverAccountNumber" ||
+      name === "driverBankCode" ||
+      name === "driverDeclaredName"
+    ) {
+      setAccountResolution(null);
+      setAccountResolutionError(null);
+    }
+  }
+
+  async function verifyAccount() {
+    const key = getBankDetailsKey(form);
+    const accountNumber = form.driverAccountNumber.trim();
+    const bankCode = form.driverBankCode.trim();
+    const declaredName = form.driverDeclaredName.trim();
+    setAccountResolution(null);
+    setAccountResolutionError(null);
+
+    if (!/^\d{10}$/.test(accountNumber)) {
+      setAccountResolutionError({
+        key,
+        message: "Enter a valid 10-digit driver bank account number.",
+      });
+      return;
+    }
+    if (!bankCode) {
+      setAccountResolutionError({ key, message: "Select a driver bank." });
+      return;
+    }
+    if (!declaredName) {
+      setAccountResolutionError({
+        key,
+        message: "Enter the driver's declared account name.",
+      });
+      return;
+    }
+
+    setResolvingAccount(true);
+    try {
+      const resolution = await resolveBankAccount({
+        account_number: accountNumber,
+        bank_code: bankCode,
+        declared_name: declaredName,
+      });
+      setAccountResolution({ key, result: resolution });
+    } catch (requestError) {
+      setAccountResolutionError({
+        key,
+        message:
+          requestError instanceof Error
+            ? requestError.message
+            : "Please check the account details and try again.",
+      });
+    } finally {
+      setResolvingAccount(false);
+    }
   }
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -282,7 +364,7 @@ export default function NewWaybillPage() {
             ← Back to home
           </Link>
           <p className="mt-5 text-xs font-medium uppercase tracking-wide text-emerald-700">
-            NURTW Escrow
+            {PRODUCT_NAME}
           </p>
           <h1 className="mt-1 text-2xl font-semibold text-slate-900">
             Book waybill
@@ -455,14 +537,41 @@ export default function NewWaybillPage() {
                 onChange={updateField}
                 placeholder="10-digit account number"
               />
-              <Field
-                label="Driver bank code"
-                name="driverBankCode"
-                inputMode="numeric"
-                value={form.driverBankCode}
-                onChange={updateField}
-                placeholder="e.g. 058"
-              />
+              {BANK_OPTIONS.length === 0 ? (
+                <p
+                  role="status"
+                  className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+                >
+                  No banks are available. Please contact support before
+                  booking.
+                </p>
+              ) : (
+                <div>
+                  <label
+                    htmlFor="driverBankCode"
+                    className="mb-1.5 block text-sm font-medium text-slate-700"
+                  >
+                    Driver bank
+                  </label>
+                  <select
+                    id="driverBankCode"
+                    name="driverBankCode"
+                    value={form.driverBankCode}
+                    onChange={(event) =>
+                      updateField("driverBankCode", event.target.value)
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-600/30"
+                    required
+                  >
+                    <option value="">Select a bank</option>
+                    {BANK_OPTIONS.map((bank) => (
+                      <option key={bank.code} value={bank.code}>
+                        {bank.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <Field
                 label="Driver declared name"
                 name="driverDeclaredName"
@@ -470,6 +579,58 @@ export default function NewWaybillPage() {
                 onChange={updateField}
                 placeholder="Name on driver's bank account"
               />
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => void verifyAccount()}
+                  disabled={resolvingAccount}
+                  className="w-full rounded-lg border border-emerald-700 px-4 py-2.5 text-sm font-medium text-emerald-800 transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {resolvingAccount ? "Verifying account…" : "Verify account"}
+                </button>
+                {accountResolutionError?.key === getBankDetailsKey(form) ? (
+                  <p
+                    role="alert"
+                    className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700"
+                  >
+                    Could not resolve this account:{" "}
+                    {accountResolutionError.message}
+                  </p>
+                ) : accountResolution?.key === getBankDetailsKey(form) ? (
+                  <div
+                    role={accountResolution.result.verified ? "status" : "alert"}
+                    className={`rounded-lg border px-3 py-2 text-sm ${
+                      accountResolution.result.verified
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                        : "border-red-100 bg-red-50 text-red-700"
+                    }`}
+                  >
+                    {!accountResolution.result.verified ? (
+                      <p>
+                        Could not resolve this account
+                        {accountResolution.result.message
+                          ? `: ${accountResolution.result.message}`
+                          : "."}
+                      </p>
+                    ) : null}
+                    <p>
+                      Resolved account name:{" "}
+                      {accountResolution.result.resolved_name || "Not provided"}
+                    </p>
+                    <p>
+                      Match result:{" "}
+                      {accountResolution.result.verified
+                        ? "Matches the declared name"
+                        : "Not verified"}
+                    </p>
+                  </div>
+                ) : (
+                  <p role="status" className="text-sm text-slate-500">
+                    Account verification is optional and does not prevent
+                    booking.
+                  </p>
+                )}
+              </div>
             </section>
 
             {error ? (
