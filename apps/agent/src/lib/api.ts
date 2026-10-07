@@ -71,6 +71,21 @@ export type AgentWaybill = {
   platform_treasury_kobo: number;
 };
 
+export type WaybillStatus = {
+  waybill_id: string;
+  current_state: string;
+  origin_park_id: string;
+  destination_park_id: string;
+  total_freight_kobo: number;
+  total_freight_naira: number;
+  driver_phone: string;
+  receiver_phone: string;
+  vehicle_reg_number: string;
+  failed_pin_attempts: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type CreateWaybillInput = {
   sender_phone: string;
   receiver_phone: string;
@@ -298,6 +313,11 @@ export function getParks(): Promise<Park[]> {
 
 export function getAgentWaybills(): Promise<AgentWaybill[]> {
   return apiRequest<AgentWaybill[]>("/api/v1/agent/waybills");
+}
+
+export function getWaybillStatus(waybillId: string): Promise<WaybillStatus> {
+  const params = new URLSearchParams({ id: waybillId });
+  return apiRequest<WaybillStatus>(`/api/v1/waybills/status?${params}`);
 }
 
 export function createWaybill(

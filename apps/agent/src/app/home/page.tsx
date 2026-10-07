@@ -266,26 +266,35 @@ export default function HomePage() {
             <ul className="mt-4 divide-y divide-slate-100">
               {waybills.map((waybill) => (
                 <li key={waybill.id} className="py-4 first:pt-0 last:pb-0">
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="break-all text-sm font-semibold text-slate-900">
-                      {waybill.id}
+                  <Link
+                    href={`/waybills/${encodeURIComponent(waybill.id)}`}
+                    aria-label={`View waybill ${waybill.id}`}
+                    className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="break-all text-sm font-semibold text-slate-900">
+                        {waybill.id}
+                      </p>
+                      <span
+                        className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(waybill.current_state)}`}
+                      >
+                        {statusLabel(waybill.current_state)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm font-medium text-slate-800">
+                      {naira(waybill.total_freight_kobo)}
                     </p>
-                    <span
-                      className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(waybill.current_state)}`}
-                    >
-                      {statusLabel(waybill.current_state)}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm font-medium text-slate-800">
-                    {naira(waybill.total_freight_kobo)}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {parkNames[waybill.origin_park_id] ||
-                      waybill.origin_park_id}{" "}
-                    →{" "}
-                    {parkNames[waybill.destination_park_id] ||
-                      waybill.destination_park_id}
-                  </p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {parkNames[waybill.origin_park_id] ||
+                        waybill.origin_park_id}{" "}
+                      →{" "}
+                      {parkNames[waybill.destination_park_id] ||
+                        waybill.destination_park_id}
+                    </p>
+                    <p className="mt-2 text-xs font-medium text-emerald-700">
+                      View details
+                    </p>
+                  </Link>
                 </li>
               ))}
             </ul>
