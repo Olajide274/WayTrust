@@ -128,7 +128,7 @@ func (c *DefaultFeeCalculator) Calculate(freightKobo int64, policy CorridorFeePo
 // Waybill entity matching the PostgreSQL ledger schema
 type Waybill struct {
 	ID                 string    `json:"id"`
-	AgentID            string    `json:"id"`
+	AgentID            string    `json:"agent_id"`
 	SenderPhone        string    `json:"sender_phone"`
 	ReceiverPhone      string    `json:"receiver_phone"`
 	DriverPhone        string    `json:"driver_phone"`
