@@ -169,6 +169,12 @@ set PAYSTACK_SECRET_KEY=sk_test_xxxxxxxx
 
 Apply migrations under `migrations/` to a database (e.g. `waytrust` or existing `nurtw_escrow` during transition).
 
+To apply the wallet-credit migration to the local Docker database:
+
+```bash
+docker exec -i nurtw-pg psql -v ON_ERROR_STOP=1 -U postgres -d nurtw_escrow < migrations/migrations/000005_wallet_credits.up.sql
+```
+
 ### Run API
 
 ```bash

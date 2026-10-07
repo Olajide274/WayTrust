@@ -292,24 +292,38 @@ func (h *RESTHandler) HandleFundWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !security.IsAdminFromContext(r.Context()) {
+		writeError(w, http.StatusForbidden, "admin access required")
+		return
+	}
+
+	adminID := security.AgentIDFromContext(r.Context())
+	if adminID == "" {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
 	var req FundWalletRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	authenticatedAgentID := security.AgentIDFromContext(r.Context())
-	if authenticatedAgentID == "" {
-		writeError(w, http.StatusUnauthorized, "authentication required")
+	if req.AgentID == "" {
+		writeError(w, http.StatusBadRequest, "agent_id is required")
 		return
 	}
-	// Agents may only fund their own wallet (body agent_id is ignored)
-	req.AgentID = authenticatedAgentID
+	if req.AmountKobo <= 0 || req.AmountKobo > 100000000 {
+		writeError(w, http.StatusBadRequest, "amount_kobo must be between 1 and 100000000")
+		return
+	}
 
-	if req.AgentID == "" || req.AmountKobo <= 0 {
-		writeError(w, http.StatusBadRequest, "Valid agent_id and amount_kobo > 0 are required")
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to fund wallet: %v", err))
 		return
 	}
+	defer tx.Rollback()
 
 	updateQuery := `
 		UPDATE agents
@@ -318,8 +332,35 @@ func (h *RESTHandler) HandleFundWallet(w http.ResponseWriter, r *http.Request) {
 		RETURNING wallet_balance_kobo
 	`
 	var newBalance int64
-	err := h.db.QueryRowContext(r.Context(), updateQuery, req.AmountKobo, req.AgentID).Scan(&newBalance)
+	err = tx.QueryRowContext(r.Context(), updateQuery, req.AmountKobo, req.AgentID).Scan(&newBalance)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "target agent not found or inactive")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to fund wallet: %v", err))
+		return
+	}
+
+	const insertCreditQuery = `
+		INSERT INTO wallet_credits (
+			agent_id, credited_by_admin_id, amount_kobo, balance_after_kobo, reason
+		) VALUES ($1, $2, $3, $4, $5)
+	`
+	if _, err := tx.ExecContext(
+		r.Context(),
+		insertCreditQuery,
+		req.AgentID,
+		adminID,
+		req.AmountKobo,
+		newBalance,
+		"Admin wallet credit",
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to record wallet credit: %v", err))
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to fund wallet: %v", err))
 		return
 	}
