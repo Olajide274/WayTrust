@@ -257,12 +257,11 @@ func (h *RESTHandler) HandleAgentProfile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	authenticatedAgentID := security.AgentIDFromContext(r.Context())
-	if authenticatedAgentID == "" {
-		writeError(w, http.StatusUnauthorized, "authentication required")
+	agentID := security.AgentIDFromContext(r.Context())
+	if agentID == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	agentID := authenticatedAgentID
 
 	query := `SELECT id, full_name, phone_number, park_id, wallet_balance_kobo, is_active FROM agents WHERE id = $1`
 	var agent domain.Agent
@@ -543,6 +542,49 @@ func (h *RESTHandler) HandleVerifyPin(w http.ResponseWriter, r *http.Request) {
 type DisburseRequest struct {
 	WaybillID      string `json:"waybill_id"`
 	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type CancelWaybillRequest struct {
+	WaybillID      string `json:"waybill_id"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+func (h *RESTHandler) HandleCancelWaybill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	agentID := security.AgentIDFromContext(r.Context())
+	if agentID == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var req CancelWaybillRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.WaybillID = strings.TrimSpace(req.WaybillID)
+	if req.WaybillID == "" {
+		writeError(w, http.StatusBadRequest, "waybill_id is required")
+		return
+	}
+
+	newBal, err := h.escrowService.CancelWaybill(r.Context(), agentID, req.WaybillID, req.IdempotencyKey)
+	if err != nil {
+		// map repository errors if you do that elsewhere
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":                "Waybill cancelled; freight returned to wallet",
+		"waybill_id":             req.WaybillID,
+		"state":                  "CANCELLED",
+		"wallet_balance_kobo":    newBal,
+	})
 }
 
 func (h *RESTHandler) HandleDisburse(w http.ResponseWriter, r *http.Request) {

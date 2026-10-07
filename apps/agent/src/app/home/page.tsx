@@ -22,6 +22,48 @@ function naira(kobo: number) {
   });
 }
 
+function statusLabel(state: string) {
+  switch (state) {
+    case "ESCROW_LOCKED":
+      return "Locked";
+    case "IN_TRANSIT":
+      return "In transit";
+    case "DELIVERED":
+      return "Delivered";
+    case "DISBURSED":
+      return "Paid out";
+    case "DISPUTE_HOLD":
+      return "Dispute";
+    case "UNCLAIMED_HOLD":
+      return "Unclaimed";
+    case "CANCELLED":
+      return "Cancelled";
+    default:
+      return state || "Unknown";
+  }
+}
+
+function statusClass(state: string) {
+  switch (state) {
+    case "ESCROW_LOCKED":
+      return "bg-amber-50 text-amber-800 border-amber-200";
+    case "IN_TRANSIT":
+      return "bg-sky-50 text-sky-800 border-sky-200";
+    case "DELIVERED":
+      return "bg-emerald-50 text-emerald-800 border-emerald-200";
+    case "DISBURSED":
+      return "bg-teal-50 text-teal-900 border-teal-200";
+    case "DISPUTE_HOLD":
+      return "bg-red-50 text-red-800 border-red-200";
+    case "UNCLAIMED_HOLD":
+      return "bg-orange-50 text-orange-800 border-orange-200";
+    case "CANCELLED":
+      return "bg-slate-100 text-slate-600 border-slate-200";
+    default:
+      return "bg-slate-50 text-slate-600 border-slate-200";
+  }
+}
+
 export default function HomePage() {
   const router = useRouter();
   const [agent, setAgent] = useState<AgentProfile | null>(null);
@@ -228,8 +270,10 @@ export default function HomePage() {
                     <p className="break-all text-sm font-semibold text-slate-900">
                       {waybill.id}
                     </p>
-                    <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-                      {waybill.current_state}
+                    <span
+                      className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(waybill.current_state)}`}
+                    >
+                      {statusLabel(waybill.current_state)}
                     </span>
                   </div>
                   <p className="mt-2 text-sm font-medium text-slate-800">

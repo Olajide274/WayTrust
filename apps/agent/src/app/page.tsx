@@ -3,9 +3,8 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
+import { ApiError, AUTH_TOKEN_KEY, loginAgent } from "@/lib/api";
 import { PRODUCT_NAME } from "@/lib/branding";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,20 +18,11 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/v1/agent/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone_number: phone.trim(),
-          password,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Login failed");
-      localStorage.setItem("nurtw_token", data.token);
+      const data = await loginAgent(phone.trim(), password);
+      localStorage.setItem(AUTH_TOKEN_KEY, data.token);
       router.push("/home");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Network error");
+      setError(err instanceof ApiError ? err.message : "Network error");
     } finally {
       setLoading(false);
     }

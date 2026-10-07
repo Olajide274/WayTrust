@@ -42,6 +42,7 @@ const (
 	WaybillStateDisbursed     = "DISBURSED"
 	WaybillStateDisputeHold   = "DISPUTE_HOLD"
 	WaybillStateUnclaimedHold = "UNCLAIMED_HOLD"
+	WaybillStateCancelled     = "CANCELLED"
 )
 
 // CorridorFeePolicy defines the dynamic rules for a specific route corridor
@@ -49,13 +50,13 @@ type CorridorFeePolicy struct {
 	ID                  string       `json:"id"`
 	CorridorName        string       `json:"corridor_name"`
 	Model               PricingModel `json:"model"`
-	ThresholdKobo       int64        `json:"threshold_kobo"`        // Upper bound for standard bracket
-	PlatformBasisPoints int64        `json:"platform_basis_points"` // e.g. 2000 = 20.00%
-	PlatformFloorKobo   int64        `json:"platform_floor_kobo"`   // Minimum platform fee floor
-	AgentBasisPoints    int64        `json:"agent_basis_points"`    // e.g. 830 = 8.30%
-	AgentFixedKobo      int64        `json:"agent_fixed_kobo"`      // Fixed commission if non-proportional
-	UnionBasisPoints    int64        `json:"union_basis_points"`    // e.g. 500 = 5.00%
-	UnionFixedKobo      int64        `json:"union_fixed_kobo"`      // Fixed dues if non-proportional
+	ThresholdKobo       int64        `json:"threshold_kobo"`
+	PlatformBasisPoints int64        `json:"platform_basis_points"`
+	PlatformFloorKobo   int64        `json:"platform_floor_kobo"`
+	AgentBasisPoints    int64        `json:"agent_basis_points"`
+	AgentFixedKobo      int64        `json:"agent_fixed_kobo"`
+	UnionBasisPoints    int64        `json:"union_basis_points"`
+	UnionFixedKobo      int64        `json:"union_fixed_kobo"`
 }
 
 // FeeCalculator evaluates dynamic corridor rules without hardcoded branches
@@ -80,7 +81,6 @@ func (c *DefaultFeeCalculator) Calculate(freightKobo int64, policy CorridorFeePo
 
 	switch policy.Model {
 	case PricingModelProportional:
-		// Basis points calculation: 10,000 bps = 100%
 		platformFee = (freightKobo * policy.PlatformBasisPoints) / 10000
 		agentCommission = (freightKobo * policy.AgentBasisPoints) / 10000
 		unionDues = (freightKobo * policy.UnionBasisPoints) / 10000
@@ -128,7 +128,7 @@ func (c *DefaultFeeCalculator) Calculate(freightKobo int64, policy CorridorFeePo
 // Waybill entity matching the PostgreSQL ledger schema
 type Waybill struct {
 	ID                 string    `json:"id"`
-	AgentID            string    `json:"agent_id"`
+	AgentID            string    `json:"id"`
 	SenderPhone        string    `json:"sender_phone"`
 	ReceiverPhone      string    `json:"receiver_phone"`
 	DriverPhone        string    `json:"driver_phone"`
@@ -152,7 +152,7 @@ type Agent struct {
 	FullName          string    `json:"full_name"`
 	PhoneNumber       string    `json:"phone_number"`
 	ParkID            string    `json:"park_id"`
-	PasswordHash      string    `json:"-"` // never expose in JSON responses
+	PasswordHash      string    `json:"-"`
 	WalletBalanceKobo int64     `json:"wallet_balance_kobo"`
 	IsActive          bool      `json:"is_active"`
 	CreatedAt         time.Time `json:"created_at"`
@@ -167,7 +167,20 @@ func CanDisburse(currentState string) bool {
 // AssertCanDisburse returns ErrInvalidStateTransition unless state is DELIVERED.
 func AssertCanDisburse(currentState string) error {
 	if !CanDisburse(currentState) {
-		return ErrInvalidStateTransition
+		return fmt.Errorf("%w: current state is %s", ErrInvalidStateTransition, currentState)
+	}
+	return nil
+}
+
+// CanCancel reports whether the agent may abort escrow and reclaim freight.
+func CanCancel(currentState string) bool {
+	return currentState == WaybillStateEscrowLocked
+}
+
+// AssertCanCancel returns ErrInvalidStateTransition unless state is ESCROW_LOCKED.
+func AssertCanCancel(currentState string) error {
+	if !CanCancel(currentState) {
+		return fmt.Errorf("%w: current state is %s", ErrInvalidStateTransition, currentState)
 	}
 	return nil
 }

@@ -5,8 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { PRODUCT_NAME } from "@/lib/branding";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "";
+import { ApiError, AUTH_TOKEN_KEY, verifyWaybillPin } from "@/lib/api";
 
 export default function DeliverPage() {
   const router = useRouter();
@@ -22,34 +21,20 @@ export default function DeliverPage() {
     setSuccess("");
     setLoading(true);
     try {
-      const token = localStorage.getItem("nurtw_token");
+      const token = localStorage.getItem(AUTH_TOKEN_KEY);
       if (!token) {
         router.replace("/");
         return;
       }
-      const res = await fetch(`${API}/api/v1/waybills/verify-pin`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          waybill_id: waybillId.trim(),
-          pin: pin.trim(),
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || data.message || "PIN verification failed");
-      }
+      const data = await verifyWaybillPin(waybillId.trim(), pin.trim());
       setSuccess(
         data.message ||
           `PIN verified · ${data.waybill_id || waybillId} · ${
-            data.state || data.current_state || "DELIVERED"
+            data.state || "DELIVERED"
           }`
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Network error");
+      setError(err instanceof ApiError ? err.message : "Network error");
     } finally {
       setLoading(false);
     }

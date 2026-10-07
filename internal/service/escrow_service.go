@@ -201,6 +201,16 @@ func (s *EscrowService) DisbursePayout(ctx context.Context, waybillID, idempoten
 	}, nil
 }
 
+func (s *EscrowService) CancelWaybill(ctx context.Context, agentID, waybillID, idempotencyKey string) (int64, error) {
+	if agentID == "" || waybillID == "" {
+		return 0, fmt.Errorf("agent_id and waybill_id are required")
+	}
+	if idempotencyKey == "" {
+		idempotencyKey = fmt.Sprintf("CANCEL_%s", waybillID)
+	}
+	return s.repo.CancelEscrowTx(ctx, waybillID, agentID, idempotencyKey)
+}
+
 // GetWaybillStatus returns the current waybill record for USSD status checks
 func (s *EscrowService) GetWaybillStatus(ctx context.Context, waybillID string) (*domain.Waybill, error) {
 	return s.repo.GetWaybill(ctx, waybillID)

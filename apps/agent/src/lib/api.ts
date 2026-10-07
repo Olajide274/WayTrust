@@ -157,6 +157,7 @@ function getErrorMessage(payload: unknown, fallback: string): string {
 export async function apiRequest<T>(
   path: string,
   init: RequestInit = {},
+  options: { clearAuthOnUnauthorized?: boolean } = {},
 ): Promise<T> {
   const headers = new Headers(init.headers);
   const token =
@@ -190,7 +191,11 @@ export async function apiRequest<T>(
   }
 
   if (!response.ok) {
-    if (response.status === 401 && typeof window !== "undefined") {
+    if (
+      response.status === 401 &&
+      options.clearAuthOnUnauthorized !== false &&
+      typeof window !== "undefined"
+    ) {
       window.localStorage.removeItem(AUTH_TOKEN_KEY);
       window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
     }
@@ -203,6 +208,47 @@ export async function apiRequest<T>(
   }
 
   return payload as T;
+}
+
+export async function loginAgent(
+  phone_number: string,
+  password: string,
+): Promise<{
+  message: string;
+  token: string;
+  agent: AgentProfile;
+  is_admin: boolean;
+}> {
+  return apiRequest(
+    "/api/v1/agent/login",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone_number, password }),
+    },
+    { clearAuthOnUnauthorized: false },
+  );
+}
+
+export async function verifyWaybillPin(
+  waybill_id: string,
+  pin: string,
+): Promise<{
+  verified: boolean;
+  waybill_id?: string;
+  state?: string;
+  message?: string;
+  attempts_remaining?: number;
+}> {
+  return apiRequest(
+    "/api/v1/waybills/verify-pin",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ waybill_id, pin }),
+    },
+    { clearAuthOnUnauthorized: false },
+  );
 }
 
 function isBankAccountResolution(

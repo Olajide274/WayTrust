@@ -15,6 +15,8 @@ var (
 	ErrAgentNotFound    = errors.New("agent record not found or currently inactive")
 	ErrAlreadyDisbursed = errors.New("waybill escrow has already been disbursed")
 	ErrInvalidPayout    = errors.New("waybill must be in DELIVERED state prior to disbursement")
+	ErrNotWaybillOwner = errors.New("waybill does not belong to this agent")
+	ErrCannotCancel    = errors.New("waybill cannot be cancelled in its current state")
 )
 
 type EscrowRepository struct {
@@ -344,6 +346,114 @@ func (r *EscrowRepository) DisburseEscrowTx(
 	}
 
 	return &splits, nil
+}
+
+// CancelEscrowTx returns locked freight to the owning agent and marks the waybill CANCELLED.
+// Allowed only from ESCROW_LOCKED. Idempotent retry: if already CANCELLED and same agent, succeeds without double-credit.
+func (r *EscrowRepository) CancelEscrowTx(
+	ctx context.Context,
+	waybillID string,
+	agentID string,
+	idempotencyKey string,
+) (newWalletBalance int64, err error) {
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1. Lock waybill
+	var currentState string
+	var ownerID string
+	var totalFreight int64
+	waybillLockQuery := `
+		SELECT current_state, agent_id::text, total_freight_kobo
+		FROM waybills
+		WHERE id = $1
+		FOR UPDATE
+	`
+	err = tx.QueryRowContext(ctx, waybillLockQuery, waybillID).Scan(&currentState, &ownerID, &totalFreight)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrWaybillNotFound
+		}
+		return 0, fmt.Errorf("failed to lock waybill: %w", err)
+	}
+
+	if ownerID != agentID {
+		return 0, ErrNotWaybillOwner
+	}
+
+	// Already cancelled: return current wallet (no second credit)
+	if currentState == domain.WaybillStateCancelled {
+		var bal int64
+		_ = tx.QueryRowContext(ctx, `SELECT wallet_balance_kobo FROM agents WHERE id = $1`, agentID).Scan(&bal)
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+		return bal, nil
+	}
+
+	if err := domain.AssertCanCancel(currentState); err != nil {
+		return 0, fmt.Errorf("%w: %s", ErrCannotCancel, currentState)
+	}
+
+	// 2. Credit full freight back to agent wallet
+	var agentBalance int64
+	lockAgentQuery := `
+		SELECT wallet_balance_kobo
+		FROM agents
+		WHERE id = $1 AND is_active = TRUE
+		FOR UPDATE
+	`
+	err = tx.QueryRowContext(ctx, lockAgentQuery, agentID).Scan(&agentBalance)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrAgentNotFound
+		}
+		return 0, fmt.Errorf("failed to lock agent wallet: %w", err)
+	}
+
+	newBalance := agentBalance + totalFreight
+	creditAgentQuery := `
+		UPDATE agents
+		SET wallet_balance_kobo = $1, updated_at = NOW()
+		WHERE id = $2
+	`
+	if _, err := tx.ExecContext(ctx, creditAgentQuery, newBalance, agentID); err != nil {
+		return 0, fmt.Errorf("failed to credit agent wallet on cancel: %w", err)
+	}
+
+	// 3. Transition waybill
+	updateWaybillQuery := `
+		UPDATE waybills
+		SET current_state = $1, updated_at = NOW()
+		WHERE id = $2
+	`
+	if _, err := tx.ExecContext(ctx, updateWaybillQuery, domain.WaybillStateCancelled, waybillID); err != nil {
+		return 0, fmt.Errorf("failed to set waybill CANCELLED: %w", err)
+	}
+
+	// 4. Ledger (REFUND matches original schema CHECK)
+	insertLedgerQuery := `
+		INSERT INTO escrow_ledgers (
+			waybill_id, transaction_type, amount_kobo, balance_after_kobo, description, idempotency_key, created_at
+		) VALUES ($1, 'REFUND', $2, $3, $4, $5, NOW())
+	`
+	key := idempotencyKey
+	if key == "" {
+		key = fmt.Sprintf("CANCEL_%s", waybillID)
+	}
+	desc := fmt.Sprintf("Waybill %s cancelled; freight returned to agent wallet", waybillID)
+	_, err = tx.ExecContext(ctx, insertLedgerQuery, waybillID, totalFreight, newBalance, desc, key)
+	if err != nil {
+		return 0, fmt.Errorf("failed to write cancel ledger: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("cancel commit failed: %w", err)
+	}
+	return newBalance, nil
 }
 
 // GetWaybill retrieves the waybill record by ID
