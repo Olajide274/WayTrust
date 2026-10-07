@@ -24,7 +24,9 @@ if [ "$HAS" != "t" ]; then
            migrations/000002_corridor_policies.up.sql \
            migrations/migrations/000003_parks.up.sql \
            migrations/migrations/000004_agent_admin.up.sql \
-           migrations/migrations/000005_wallet_credits.up.sql; do
+           migrations/migrations/000005_wallet_credits.up.sql \
+           migrations/migrations/000006_unclaimed_transit_timeout.up.sql \
+           migrations/migrations/000007_receiver_refusal_reports.up.sql; do
     echo "  $f"
     docker exec -i nurtw-pg psql -v ON_ERROR_STOP=1 -q -U postgres -d nurtw_escrow < "$f"
   done
