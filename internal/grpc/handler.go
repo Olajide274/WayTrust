@@ -144,6 +144,18 @@ func (h *WaybillGRPCHandler) DisbursePayout(
 		if errors.Is(err, repository.ErrWaybillNotFound) {
 			return nil, status.Error(codes.NotFound, "waybill not found")
 		}
+		if errors.Is(err, service.ErrPayoutInProgress) {
+			return nil, status.Error(
+				codes.Aborted,
+				service.PayoutInProgressResponse+": "+service.PayoutInProgressReason,
+			)
+		}
+		if errors.Is(err, service.ErrPayoutTransferFailed) {
+			return nil, status.Error(
+				codes.Unavailable,
+				service.PayoutFailedResponse+": "+service.PayoutFailedReason,
+			)
+		}
 		return nil, status.Errorf(codes.Internal, "disbursement failed: %v", err)
 	}
 

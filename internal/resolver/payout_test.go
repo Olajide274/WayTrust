@@ -54,13 +54,22 @@ func TestInitiateDriverPayoutReturnsPaystackStatus(t *testing.T) {
 
 func TestInitiateDriverPayoutVerifiesDuplicateReference(t *testing.T) {
 	t.Setenv("PAYSTACK_SECRET_KEY", "test-key")
-	var transferCalls, verifyCalls int
+	var transferCalls, verifyCalls, acceptedTransfers int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/transferrecipient":
 			_, _ = w.Write([]byte(`{"status":true,"data":{"recipient_code":"RCP_test"}}`))
 		case "/transfer":
 			transferCalls++
+			if transferCalls == 1 {
+				acceptedTransfers++
+				_, _ = w.Write([]byte(`{
+					"status":true,
+					"message":"Transfer attempted",
+					"data":{"reference":"REF-1","status":"pending","gateway_response":"Processing"}
+				}`))
+				return
+			}
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"status":false,"message":"Duplicate transfer reference"}`))
 		case "/transfer/verify/REF-1":
@@ -80,17 +89,29 @@ func TestInitiateDriverPayoutVerifiesDuplicateReference(t *testing.T) {
 		httpClient: server.Client(),
 		baseURL:    server.URL,
 	}
+	pending, err := disburser.InitiateDriverPayout(
+		context.Background(), "Driver", "0123456789", "001", 1000, "REF-1",
+	)
+	if err != nil {
+		t.Fatalf("first InitiateDriverPayout() error = %v", err)
+	}
+	if pending.Reference != "REF-1" || pending.Status != "pending" {
+		t.Fatalf("first InitiateDriverPayout() = %+v, want pending transfer for REF-1", pending)
+	}
 	transfer, err := disburser.InitiateDriverPayout(
 		context.Background(), "Driver", "0123456789", "001", 1000, "REF-1",
 	)
 	if err != nil {
-		t.Fatalf("InitiateDriverPayout() error = %v", err)
+		t.Fatalf("retry InitiateDriverPayout() error = %v", err)
 	}
 	if transfer.Reference != "REF-1" || transfer.Status != "success" {
 		t.Fatalf("InitiateDriverPayout() = %+v, want verified success for REF-1", transfer)
 	}
-	if transferCalls != 1 || verifyCalls != 1 {
-		t.Fatalf("transfer calls = %d, verify calls = %d, want 1 each", transferCalls, verifyCalls)
+	if transferCalls != 2 || verifyCalls != 1 || acceptedTransfers != 1 {
+		t.Fatalf(
+			"transfer calls = %d, verify calls = %d, accepted transfers = %d; want 2, 1, 1",
+			transferCalls, verifyCalls, acceptedTransfers,
+		)
 	}
 }
 

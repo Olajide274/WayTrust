@@ -120,14 +120,15 @@ func (h *USSDHandler) processUSSDInput(ctx context.Context, sessionID, _ string,
 
 		// 4. Trigger automated driver bank payout immediately
 		idempotencyKey := fmt.Sprintf("USSD_%s_%s", sessionID, waybillID)
-		payoutResult, err := h.escrowService.DisbursePayout(ctx, waybillID, idempotencyKey)
+		_, err = h.escrowService.DisbursePayout(ctx, waybillID, idempotencyKey)
 		if err != nil {
-			// Delivery is already recorded in DB, payout can be retried by cron if gateway timeout occurs
-			return "END Parcel release confirmed! Driver payout is queued for processing."
+			if errors.Is(err, service.ErrPayoutInProgress) {
+				return "END Delivery confirmed. The driver payment is being processed. Please check again shortly."
+			}
+			return "END Delivery confirmed, but the driver payment did not go through. Please contact the park clerk."
 		}
 
-		return fmt.Sprintf("END Release Successful!\nWaybill %s confirmed.\nDriver transfer: N%.2f (Ref: %s).",
-			waybillID, float64(payoutResult.DriverPayoutKobo)/100.0, payoutResult.TransferReference)
+		return "END Delivery confirmed. The driver payment has been sent. Thank you."
 	}
 
 	return "END Invalid USSD command format. Dial *347# to begin."

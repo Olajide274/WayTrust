@@ -859,6 +859,24 @@ func (h *RESTHandler) HandleDisburse(w http.ResponseWriter, r *http.Request) {
 
 	res, err := h.escrowService.DisbursePayout(r.Context(), req.WaybillID, req.IdempotencyKey)
 	if err != nil {
+		if errors.Is(err, service.ErrPayoutInProgress) {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error":  service.PayoutInProgressResponse,
+				"reason": service.PayoutInProgressReason,
+			})
+			return
+		}
+		if errors.Is(err, service.ErrPayoutTransferFailed) {
+			observability.Error("waybill_disburse_payout_failed", observability.Fields{
+				"waybill_id": req.WaybillID,
+				"error":      err.Error(),
+			})
+			writeJSON(w, http.StatusBadGateway, map[string]string{
+				"error":  service.PayoutFailedResponse,
+				"reason": service.PayoutFailedReason,
+			})
+			return
+		}
 		observability.Error("waybill_disburse_failed", observability.Fields{
 			"waybill_id": req.WaybillID,
 			"error":      err.Error(),

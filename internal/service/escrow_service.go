@@ -28,6 +28,13 @@ var (
 	ErrAdminCannotResolveOwnWaybill = errors.New("administrators cannot resolve waybills they booked")
 )
 
+const (
+	PayoutInProgressResponse = "payout in progress; retry later"
+	PayoutInProgressReason   = "Paystack has not confirmed the transfer as successful"
+	PayoutFailedResponse     = "driver payout failed; waybill remains delivered"
+	PayoutFailedReason       = "The driver payout could not be confirmed."
+)
+
 type EscrowService struct {
 	repo            *repository.EscrowRepository
 	nibssResolver   resolver.BankAccountResolver
@@ -190,26 +197,25 @@ func (s *EscrowService) DisbursePayout(ctx context.Context, waybillID, idempoten
 		return nil, fmt.Errorf("failed to retrieve payout split: %w", err)
 	}
 
-	transfer, err := s.payoutDisburser.InitiateDriverPayout(
+	transferReference, finalSplits, err := disburseAndSettle(
 		ctx,
+		s.payoutDisburser,
 		w.DriverVerifiedName,
 		w.DriverAccountNum,
 		w.DriverBankCode,
 		splits.DriverPayoutKobo,
 		idempotencyKey,
+		func(reference string) (*domain.SplitBreakdown, error) {
+			return s.repo.DisburseEscrowTx(ctx, waybillID, reference, idempotencyKey)
+		},
 	)
-	if err != nil {
-		return nil, fmt.Errorf("upstream payout transfer failed: %w", err)
-	}
-
-	finalSplits, err := s.repo.DisburseEscrowTx(ctx, waybillID, transfer.Reference, idempotencyKey)
 	if err != nil {
 		return nil, err
 	}
 
 	return &DisbursePayoutResult{
 		WaybillID:            waybillID,
-		TransferReference:    transfer.Reference,
+		TransferReference:    transferReference,
 		DriverPayoutKobo:     finalSplits.DriverPayoutKobo,
 		AgentCommissionKobo:  finalSplits.AgentCommissionKobo,
 		UnionDuesKobo:        finalSplits.UnionDuesKobo,
@@ -260,7 +266,7 @@ func (s *EscrowService) ResolveHeldWaybill(
 			if err != nil {
 				return "", fmt.Errorf("%w: %w", ErrPayoutTransferFailed, err)
 			}
-			return adminResolutionTransferReference(transfer, reference)
+			return payoutTransferReference(transfer, reference)
 		}
 	}
 
@@ -282,7 +288,34 @@ func (s *EscrowService) ResolveHeldWaybill(
 	}, nil
 }
 
-func adminResolutionTransferReference(transfer resolver.PayoutTransfer, fallbackReference string) (string, error) {
+func disburseAndSettle(
+	ctx context.Context,
+	disburser resolver.PayoutDisburser,
+	accountName, accountNumber, bankCode string,
+	amountKobo int64,
+	reference string,
+	settle func(string) (*domain.SplitBreakdown, error),
+) (string, *domain.SplitBreakdown, error) {
+	transfer, err := disburser.InitiateDriverPayout(
+		ctx, accountName, accountNumber, bankCode, amountKobo, reference,
+	)
+	if err != nil {
+		return "", nil, fmt.Errorf("%w: %w", ErrPayoutTransferFailed, err)
+	}
+
+	transferReference, err := payoutTransferReference(transfer, reference)
+	if err != nil {
+		return "", nil, err
+	}
+
+	splits, err := settle(transferReference)
+	if err != nil {
+		return "", nil, err
+	}
+	return transferReference, splits, nil
+}
+
+func payoutTransferReference(transfer resolver.PayoutTransfer, fallbackReference string) (string, error) {
 	switch transfer.Status {
 	case "success":
 		if transfer.Reference != "" {

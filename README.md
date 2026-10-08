@@ -140,6 +140,8 @@ Amounts are always **integer kobo**.
 
 Receiver refusal reports are limited to the owning agent while a waybill is `IN_TRANSIT`. Reporting a refusal changes its state to `DISPUTE_HOLD` and keeps funds held until an administrator resolves the waybill to the driver or refunds the booking agent.
 
+Delivery payout settlement only occurs after Paystack reports `success`. A `pending`, `processing`, or `otp` response leaves the waybill `DELIVERED` and returns HTTP `409` with `{"error":"payout in progress; retry later","reason":"Paystack has not confirmed the transfer as successful"}`. Retry with the same `idempotency_key`; Paystack duplicate-reference responses are verified instead of starting another transfer. Other payout failures leave settlement records unchanged and return HTTP `502` with a non-sensitive reason. gRPC reports in-progress payouts as `ABORTED` with the same message and reason; payout failures use `UNAVAILABLE` and a non-sensitive message.
+
 ---
 
 ## Local development
