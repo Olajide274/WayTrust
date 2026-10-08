@@ -753,12 +753,30 @@ func (h *RESTHandler) HandleResolveHeldWaybill(w http.ResponseWriter, r *http.Re
 		case errors.Is(err, repository.ErrWaybillNotHeld),
 			errors.Is(err, repository.ErrWaybillAlreadyResolved):
 			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, service.ErrAdminCannotResolveOwnWaybill):
+			writeError(w, http.StatusForbidden, "administrators cannot resolve waybills they booked")
+		case errors.Is(err, service.ErrPayoutInProgress):
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error":  "payout in progress; retry later",
+				"reason": "Paystack has not confirmed the transfer as successful",
+			})
 		case errors.Is(err, service.ErrPayoutTransferFailed):
-			observability.Error("waybill_resolution_payout_failed", observability.Fields{
+			var payoutErr *resolver.PayoutError
+			_ = errors.As(err, &payoutErr)
+			fields := observability.Fields{
 				"waybill_id": req.WaybillID,
 				"error":      err.Error(),
+			}
+			if payoutErr != nil {
+				fields["paystack_status"] = payoutErr.HTTPStatus
+				fields["paystack_message"] = payoutErr.Message
+				fields["paystack_transfer_status"] = payoutErr.TransferStatus
+			}
+			observability.Error("waybill_resolution_payout_failed", fields)
+			writeJSON(w, http.StatusBadGateway, map[string]string{
+				"error":  "driver payout failed; waybill remains held",
+				"reason": "Paystack could not confirm a successful transfer",
 			})
-			writeError(w, http.StatusBadGateway, "driver payout failed; waybill remains held")
 		default:
 			observability.Error("waybill_resolution_failed", observability.Fields{
 				"waybill_id": req.WaybillID,

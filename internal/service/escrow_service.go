@@ -24,6 +24,8 @@ var (
 	ErrInvalidReceiverRefusalReason = errors.New("receiver refusal reason must be between 1 and 500 characters")
 	ErrInvalidResolutionReason      = errors.New("resolution reason must be between 1 and 500 characters")
 	ErrPayoutTransferFailed         = errors.New("upstream payout transfer failed")
+	ErrPayoutInProgress             = errors.New("payout in progress; retry later")
+	ErrAdminCannotResolveOwnWaybill = errors.New("administrators cannot resolve waybills they booked")
 )
 
 type EscrowService struct {
@@ -188,7 +190,7 @@ func (s *EscrowService) DisbursePayout(ctx context.Context, waybillID, idempoten
 		return nil, fmt.Errorf("failed to retrieve payout split: %w", err)
 	}
 
-	transferRef, err := s.payoutDisburser.InitiateDriverPayout(
+	transfer, err := s.payoutDisburser.InitiateDriverPayout(
 		ctx,
 		w.DriverVerifiedName,
 		w.DriverAccountNum,
@@ -200,14 +202,14 @@ func (s *EscrowService) DisbursePayout(ctx context.Context, waybillID, idempoten
 		return nil, fmt.Errorf("upstream payout transfer failed: %w", err)
 	}
 
-	finalSplits, err := s.repo.DisburseEscrowTx(ctx, waybillID, transferRef, idempotencyKey)
+	finalSplits, err := s.repo.DisburseEscrowTx(ctx, waybillID, transfer.Reference, idempotencyKey)
 	if err != nil {
 		return nil, err
 	}
 
 	return &DisbursePayoutResult{
 		WaybillID:            waybillID,
-		TransferReference:    transferRef,
+		TransferReference:    transfer.Reference,
 		DriverPayoutKobo:     finalSplits.DriverPayoutKobo,
 		AgentCommissionKobo:  finalSplits.AgentCommissionKobo,
 		UnionDuesKobo:        finalSplits.UnionDuesKobo,
@@ -234,6 +236,15 @@ func (s *EscrowService) ResolveHeldWaybill(
 		return nil, repository.ErrInvalidResolutionOutcome
 	}
 
+	waybill, err := s.repo.GetWaybill(ctx, waybillID)
+	if err != nil {
+		return nil, err
+	}
+	if (waybill.CurrentState == domain.WaybillStateDisputeHold ||
+		waybill.CurrentState == domain.WaybillStateUnclaimedHold) && waybill.AgentID == adminID {
+		return nil, ErrAdminCannotResolveOwnWaybill
+	}
+
 	payoutReference := fmt.Sprintf("ADMIN_RESOLVE_%s", waybillID)
 	var payout repository.HeldWaybillPayout
 	if outcome == domain.ResolutionReleaseToDriver {
@@ -243,13 +254,13 @@ func (s *EscrowService) ResolveHeldWaybill(
 			amountKobo int64,
 			reference string,
 		) (string, error) {
-			transferRef, err := s.payoutDisburser.InitiateDriverPayout(
+			transfer, err := s.payoutDisburser.InitiateDriverPayout(
 				ctx, accountName, accountNo, bankCode, amountKobo, reference,
 			)
 			if err != nil {
 				return "", fmt.Errorf("%w: %w", ErrPayoutTransferFailed, err)
 			}
-			return transferRef, nil
+			return adminResolutionTransferReference(transfer, reference)
 		}
 	}
 
@@ -269,6 +280,33 @@ func (s *EscrowService) ResolveHeldWaybill(
 		TransferReference: resolution.TransferReference,
 		DriverPayoutKobo:  resolution.Splits.DriverPayoutKobo,
 	}, nil
+}
+
+func adminResolutionTransferReference(transfer resolver.PayoutTransfer, fallbackReference string) (string, error) {
+	switch transfer.Status {
+	case "success":
+		if transfer.Reference != "" {
+			return transfer.Reference, nil
+		}
+		return fallbackReference, nil
+	case "pending", "processing", "otp":
+		message := "payout is pending or awaiting approval; retry later"
+		if transfer.Status == "pending" || transfer.Status == "processing" {
+			message = "payout is in progress; retry later"
+		}
+		return "", fmt.Errorf("%w: %s", ErrPayoutInProgress, message)
+	default:
+		message := transfer.Message
+		if message == "" {
+			message = "Paystack transfer status is " + transfer.Status
+		}
+		return "", fmt.Errorf("%w: %w", ErrPayoutTransferFailed, &resolver.PayoutError{
+			HTTPStatus:     transfer.HTTPStatus,
+			Message:        message,
+			TransferStatus: transfer.Status,
+			Err:            resolver.ErrTransferFailed,
+		})
+	}
 }
 
 func (s *EscrowService) CancelWaybill(ctx context.Context, agentID, waybillID, idempotencyKey string) (int64, error) {
