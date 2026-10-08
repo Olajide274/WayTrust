@@ -232,6 +232,18 @@ export default function HomePage() {
           </div>
         </section>
 
+        {agent?.is_admin ? (
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Administration</h2>
+            <Link
+              href="/admin/settlement"
+              className="mt-4 inline-flex w-full items-center justify-center rounded-lg border border-emerald-700 px-4 py-3 text-sm font-medium text-emerald-800 transition-colors hover:bg-emerald-50"
+            >
+              Settlement summary
+            </Link>
+          </section>
+        ) : null}
+
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">My waybills</h2>
           {waybillsLoading ? (

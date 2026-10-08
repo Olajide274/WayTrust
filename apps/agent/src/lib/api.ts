@@ -46,6 +46,21 @@ export type AgentProfile = {
   is_admin?: boolean;
 };
 
+export type SettlementTotals = {
+  count: number;
+  driver_payout_kobo: number;
+  agent_commission_kobo: number;
+  union_dues_kobo: number;
+  platform_treasury_kobo: number;
+};
+
+export type SettlementSummary = {
+  paid: SettlementTotals;
+  pending: SettlementTotals;
+  held: SettlementTotals;
+  refunded: SettlementTotals;
+};
+
 export type Park = {
   id: string;
   name: string;
@@ -309,6 +324,18 @@ export async function resolveBankAccount(
 
 export function getAgentProfile(): Promise<AgentProfile> {
   return apiRequest<AgentProfile>("/api/v1/agent/profile");
+}
+
+export function getSettlementSummary(
+  filters: { from?: string; to?: string } = {},
+): Promise<SettlementSummary> {
+  const params = new URLSearchParams();
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return apiRequest<SettlementSummary>(
+    `/api/v1/admin/settlement/summary${query}`,
+  );
 }
 
 export function getParks(): Promise<Park[]> {

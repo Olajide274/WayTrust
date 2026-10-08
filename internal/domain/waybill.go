@@ -163,6 +163,7 @@ type Agent struct {
 	PasswordHash      string    `json:"-"`
 	WalletBalanceKobo int64     `json:"wallet_balance_kobo"`
 	IsActive          bool      `json:"is_active"`
+	IsAdmin           bool      `json:"is_admin"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }

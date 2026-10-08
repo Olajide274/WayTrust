@@ -214,6 +214,7 @@ func main() {
 	mux.HandleFunc("/api/v1/waybills/report-refusal", security.AuthMiddleware(restHandler.HandleReportReceiverRefusal))
 	mux.HandleFunc("/api/v1/waybills/disburse", security.AuthMiddleware(restHandler.HandleDisburse))
 	mux.HandleFunc("/api/v1/admin/waybills/resolve", security.AuthMiddleware(restHandler.HandleResolveHeldWaybill))
+	mux.HandleFunc("/api/v1/admin/settlement/summary", security.AuthMiddleware(restHandler.HandleSettlementSummary))
 	mux.HandleFunc("/api/v1/waybills/status", security.AuthMiddleware(restHandler.HandleWaybillStatus))
 	mux.HandleFunc("/api/v1/agent/waybills", security.AuthMiddleware(restHandler.HandleListAgentWaybills))
 	mux.HandleFunc("/api/v1/agent/fund-wallet", security.AuthMiddleware(restHandler.HandleFundWallet))

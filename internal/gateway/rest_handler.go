@@ -277,7 +277,108 @@ func (h *RESTHandler) HandleAgentProfile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	agent.IsAdmin = security.IsAdminFromContext(r.Context())
 	writeJSON(w, http.StatusOK, agent)
+}
+
+type SettlementTotals struct {
+	Count                int64 `json:"count"`
+	DriverPayoutKobo     int64 `json:"driver_payout_kobo"`
+	AgentCommissionKobo  int64 `json:"agent_commission_kobo"`
+	UnionDuesKobo        int64 `json:"union_dues_kobo"`
+	PlatformTreasuryKobo int64 `json:"platform_treasury_kobo"`
+}
+
+type SettlementSummary struct {
+	Paid     SettlementTotals `json:"paid"`
+	Pending  SettlementTotals `json:"pending"`
+	Held     SettlementTotals `json:"held"`
+	Refunded SettlementTotals `json:"refunded"`
+}
+
+func (h *RESTHandler) HandleSettlementSummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !security.IsAdminFromContext(r.Context()) {
+		writeError(w, http.StatusForbidden, "admin access required")
+		return
+	}
+
+	fromDate, err := settlementDateQueryParam(r, "from")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "from must be a date in YYYY-MM-DD format")
+		return
+	}
+	toDate, err := settlementDateQueryParam(r, "to")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "to must be a date in YYYY-MM-DD format")
+		return
+	}
+	if fromDate != nil && toDate != nil && *fromDate > *toDate {
+		writeError(w, http.StatusBadRequest, "from must not be after to")
+		return
+	}
+
+	const query = `
+		SELECT
+			COUNT(*) FILTER (WHERE p.disbursed_at IS NOT NULL),
+			COALESCE(SUM(p.driver_payout_kobo) FILTER (WHERE p.disbursed_at IS NOT NULL), 0),
+			COALESCE(SUM(p.agent_commission_kobo) FILTER (WHERE p.disbursed_at IS NOT NULL), 0),
+			COALESCE(SUM(p.union_dues_kobo) FILTER (WHERE p.disbursed_at IS NOT NULL), 0),
+			COALESCE(SUM(p.platform_treasury_kobo) FILTER (WHERE p.disbursed_at IS NOT NULL), 0),
+			COUNT(*) FILTER (WHERE w.current_state = 'DELIVERED' AND p.disbursed_at IS NULL),
+			COALESCE(SUM(p.driver_payout_kobo) FILTER (WHERE w.current_state = 'DELIVERED' AND p.disbursed_at IS NULL), 0),
+			COALESCE(SUM(p.agent_commission_kobo) FILTER (WHERE w.current_state = 'DELIVERED' AND p.disbursed_at IS NULL), 0),
+			COALESCE(SUM(p.union_dues_kobo) FILTER (WHERE w.current_state = 'DELIVERED' AND p.disbursed_at IS NULL), 0),
+			COALESCE(SUM(p.platform_treasury_kobo) FILTER (WHERE w.current_state = 'DELIVERED' AND p.disbursed_at IS NULL), 0),
+			COUNT(*) FILTER (WHERE w.current_state IN ('DISPUTE_HOLD', 'UNCLAIMED_HOLD')),
+			COALESCE(SUM(p.driver_payout_kobo) FILTER (WHERE w.current_state IN ('DISPUTE_HOLD', 'UNCLAIMED_HOLD')), 0),
+			COALESCE(SUM(p.agent_commission_kobo) FILTER (WHERE w.current_state IN ('DISPUTE_HOLD', 'UNCLAIMED_HOLD')), 0),
+			COALESCE(SUM(p.union_dues_kobo) FILTER (WHERE w.current_state IN ('DISPUTE_HOLD', 'UNCLAIMED_HOLD')), 0),
+			COALESCE(SUM(p.platform_treasury_kobo) FILTER (WHERE w.current_state IN ('DISPUTE_HOLD', 'UNCLAIMED_HOLD')), 0),
+			COUNT(*) FILTER (WHERE w.current_state = 'REFUNDED'),
+			COALESCE(SUM(p.driver_payout_kobo) FILTER (WHERE w.current_state = 'REFUNDED'), 0),
+			COALESCE(SUM(p.agent_commission_kobo) FILTER (WHERE w.current_state = 'REFUNDED'), 0),
+			COALESCE(SUM(p.union_dues_kobo) FILTER (WHERE w.current_state = 'REFUNDED'), 0),
+			COALESCE(SUM(p.platform_treasury_kobo) FILTER (WHERE w.current_state = 'REFUNDED'), 0)
+		FROM waybills w
+		JOIN payout_splits p ON p.waybill_id = w.id
+		WHERE ($1::date IS NULL OR COALESCE(p.disbursed_at, w.created_at) >= $1::date)
+		  AND ($2::date IS NULL OR COALESCE(p.disbursed_at, w.created_at) < $2::date + INTERVAL '1 day')
+	`
+
+	var summary SettlementSummary
+	err = h.db.QueryRowContext(r.Context(), query, fromDate, toDate).Scan(
+		&summary.Paid.Count, &summary.Paid.DriverPayoutKobo, &summary.Paid.AgentCommissionKobo,
+		&summary.Paid.UnionDuesKobo, &summary.Paid.PlatformTreasuryKobo,
+		&summary.Pending.Count, &summary.Pending.DriverPayoutKobo, &summary.Pending.AgentCommissionKobo,
+		&summary.Pending.UnionDuesKobo, &summary.Pending.PlatformTreasuryKobo,
+		&summary.Held.Count, &summary.Held.DriverPayoutKobo, &summary.Held.AgentCommissionKobo,
+		&summary.Held.UnionDuesKobo, &summary.Held.PlatformTreasuryKobo,
+		&summary.Refunded.Count, &summary.Refunded.DriverPayoutKobo, &summary.Refunded.AgentCommissionKobo,
+		&summary.Refunded.UnionDuesKobo, &summary.Refunded.PlatformTreasuryKobo,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load settlement summary")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, summary)
+}
+
+func settlementDateQueryParam(r *http.Request, name string) (*string, error) {
+	value := strings.TrimSpace(r.URL.Query().Get(name))
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return nil, err
+	}
+	formatted := parsed.Format("2006-01-02")
+	return &formatted, nil
 }
 
 // Fund Agent Wallet (Simulate cash collected at motor park counter or Paystack top-up)

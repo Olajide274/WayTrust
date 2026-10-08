@@ -131,12 +131,15 @@ Base URL (local): `http://localhost:8080`
 | `POST` | `/api/v1/waybills/report-refusal` | JWT | Record receiver refusal; hold escrow |
 | `POST` | `/api/v1/waybills/disburse` | JWT | Payout |
 | `POST` | `/api/v1/admin/waybills/resolve` | Admin JWT | Release held funds to driver or refund booking agent |
+| `GET` | `/api/v1/admin/settlement/summary` | Admin JWT | Read-only settlement totals; optional `from`/`to` (`YYYY-MM-DD`) |
 | `POST` | `/api/v1/ussd` | Gateway | USSD entry |
 | `GET` | `/app/` | No | Thin agent PWA |
 
 \* Tighten public register for production.
 
 Amounts are always **integer kobo**.
+
+The admin settlement summary reports payout splits and waybill counts for paid (non-null disbursement timestamp), pending (`DELIVERED` without a disbursement timestamp), held, and refunded waybills. Optional date filters apply to disbursement date for paid waybills and creation date for pending, held, and refunded waybills. The admin console is available at `/admin/settlement`.
 
 Receiver refusal reports are limited to the owning agent while a waybill is `IN_TRANSIT`. Reporting a refusal changes its state to `DISPUTE_HOLD` and keeps funds held until an administrator resolves the waybill to the driver or refunds the booking agent.
 
