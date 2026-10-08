@@ -553,8 +553,6 @@ func (h *RESTHandler) HandleCreateWaybill(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	req.AgentID = authenticatedAgentID
-
 	// Dynamically query PostgreSQL for active corridor policy
 	policy, err := h.repo.GetCorridorPolicy(r.Context(), req.OriginParkID, req.DestinationParkID)
 	if err != nil {
@@ -563,7 +561,7 @@ func (h *RESTHandler) HandleCreateWaybill(w http.ResponseWriter, r *http.Request
 	}
 
 	dto := service.CreateWaybillDTO{
-		AgentID:             req.AgentID,
+		AgentID:             authenticatedAgentID,
 		SenderPhone:         req.SenderPhone,
 		ReceiverPhone:       req.ReceiverPhone,
 		DriverPhone:         req.DriverPhone,
@@ -923,6 +921,22 @@ func (h *RESTHandler) HandleCancelWaybill(w http.ResponseWriter, r *http.Request
 	req.WaybillID = strings.TrimSpace(req.WaybillID)
 	if req.WaybillID == "" {
 		writeError(w, http.StatusBadRequest, "waybill_id is required")
+		return
+	}
+
+	var currentState string
+	err := h.db.QueryRowContext(
+		r.Context(),
+		`SELECT current_state FROM waybills WHERE id = $1 AND agent_id = $2`,
+		req.WaybillID,
+		agentID,
+	).Scan(&currentState)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to check waybill state")
+		return
+	}
+	if err == nil && currentState == domain.WaybillStateCancelled {
+		writeError(w, http.StatusConflict, "waybill is already cancelled")
 		return
 	}
 

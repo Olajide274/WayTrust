@@ -203,7 +203,7 @@ func main() {
 	mux.HandleFunc("/api/v1/agent/login", restHandler.HandleLogin)
 	mux.HandleFunc("/api/v1/parks", restHandler.HandleListParks)
 	mux.Handle("/api/v1/ussd", ussdHandler)
-	mux.HandleFunc("/api/v1/waybills/cancel", restHandler.HandleCancelWaybill)
+	mux.HandleFunc("/api/v1/waybills/cancel", security.AuthMiddleware(restHandler.HandleCancelWaybill))
 
 	// Protected routes (JWT required)
 	mux.HandleFunc("/api/v1/agent/profile", security.AuthMiddleware(restHandler.HandleAgentProfile))
