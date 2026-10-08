@@ -13,73 +13,14 @@ import {
   reportReceiverRefusal,
   startWaybillTransit,
   type WaybillStatus,
-  type Park,
 } from "@/lib/api";
-
-function naira(kobo: number) {
-  return (Number(kobo || 0) / 100).toLocaleString("en-NG", {
-    style: "currency",
-    currency: "NGN",
-  });
-}
-
-function statusLabel(state: string) {
-  switch (state) {
-    case "ESCROW_LOCKED":
-      return "Locked";
-    case "IN_TRANSIT":
-      return "In transit";
-    case "DELIVERED":
-      return "Delivered";
-    case "DISBURSED":
-      return "Paid out";
-    case "DISPUTE_HOLD":
-      return "Dispute";
-    case "UNCLAIMED_HOLD":
-      return "Unclaimed";
-    case "CANCELLED":
-      return "Cancelled";
-    default:
-      return state || "Unknown";
-  }
-}
-
-function statusClass(state: string) {
-  switch (state) {
-    case "ESCROW_LOCKED":
-      return "border-amber-200 bg-amber-50 text-amber-800";
-    case "IN_TRANSIT":
-      return "border-sky-200 bg-sky-50 text-sky-800";
-    case "DELIVERED":
-      return "border-emerald-200 bg-emerald-50 text-emerald-800";
-    case "DISBURSED":
-      return "border-teal-200 bg-teal-50 text-teal-900";
-    case "DISPUTE_HOLD":
-      return "border-red-200 bg-red-50 text-red-800";
-    case "UNCLAIMED_HOLD":
-      return "border-orange-200 bg-orange-50 text-orange-800";
-    case "CANCELLED":
-      return "border-slate-200 bg-slate-100 text-slate-600";
-    default:
-      return "border-slate-200 bg-slate-50 text-slate-600";
-  }
-}
-
-function formatCreatedAt(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleString("en-NG", {
-        dateStyle: "medium",
-        timeStyle: "short",
-      });
-}
+import { formatDate, formatNaira, formatPark, formatStatus, userErrorMessage } from "@/lib/format";
 
 export default function WaybillDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [waybill, setWaybill] = useState<WaybillStatus | null>(null);
-  const [parkNames, setParkNames] = useState<Record<string, string>>({});
+  const [parks, setParks] = useState<Awaited<ReturnType<typeof getParks>>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [transitError, setTransitError] = useState("");
@@ -101,15 +42,14 @@ export default function WaybillDetailPage() {
         return;
       }
 
-      const [details, parks]: [WaybillStatus, Park[]] = await Promise.all([
+      const [details, loadedParks]: [WaybillStatus, Awaited<ReturnType<typeof getParks>>] = await Promise.all([
         getWaybillStatus(id),
         getParks(),
       ]);
       setWaybill(details);
-      setParkNames(
-        Object.fromEntries(parks.map((park) => [park.id, park.name])),
-      );
+      setParks(loadedParks);
     } catch (requestError) {
+      console.error("Could not load waybill details", requestError);
       if (requestError instanceof ApiError && requestError.status === 401) {
         router.replace("/");
       } else if (
@@ -118,11 +58,7 @@ export default function WaybillDetailPage() {
       ) {
         setNotFound(true);
       } else {
-        setError(
-          requestError instanceof Error
-            ? requestError.message
-            : "Could not load this waybill.",
-        );
+        setError(userErrorMessage(requestError, "Could not load this waybill. Please try again."));
       }
     } finally {
       setLoading(false);
@@ -146,11 +82,8 @@ export default function WaybillDetailPage() {
       await startWaybillTransit(id);
       await loadWaybill();
     } catch (requestError) {
-      setTransitError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Could not start transit.",
-      );
+      console.error("Could not start waybill transit", requestError);
+      setTransitError(userErrorMessage(requestError, "Could not start transit. Please try again."));
     } finally {
       setStartingTransit(false);
     }
@@ -165,15 +98,14 @@ export default function WaybillDetailPage() {
       setRefusalReason("");
       await loadWaybill();
     } catch (requestError) {
-      setRefusalError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Could not report the receiver refusal.",
-      );
+      console.error("Could not report receiver refusal", requestError);
+      setRefusalError(userErrorMessage(requestError, "Could not report the receiver refusal. Please try again."));
     } finally {
       setReportingRefusal(false);
     }
   }
+
+  const status = formatStatus(waybill?.current_state || "CREATED");
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-8">
@@ -191,9 +123,16 @@ export default function WaybillDetailPage() {
         </h1>
 
         {loading ? (
-          <p className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
-            Loading waybill details…
-          </p>
+          <section aria-busy="true" aria-label="Loading waybill details" className="mt-6 space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex justify-between gap-4">
+              <div className="h-5 w-40 animate-pulse rounded bg-slate-200" />
+              <div className="h-7 w-24 animate-pulse rounded-full bg-slate-100" />
+            </div>
+            <div className="h-4 w-20 animate-pulse rounded bg-slate-100" />
+            <div className="h-6 w-3/4 animate-pulse rounded bg-slate-200" />
+            <div className="h-4 w-16 animate-pulse rounded bg-slate-100" />
+            <div className="h-7 w-32 animate-pulse rounded bg-slate-200" />
+          </section>
         ) : notFound ? (
           <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="font-semibold text-slate-900">Waybill not found</h2>
@@ -221,9 +160,9 @@ export default function WaybillDetailPage() {
                 {waybill.waybill_id}
               </p>
               <span
-                className={`rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(waybill.current_state)}`}
+                className={`rounded-full border px-2.5 py-1 text-xs font-medium ${status.className}`}
               >
-                {statusLabel(waybill.current_state)}
+                {status.label}
               </span>
             </div>
 
@@ -233,13 +172,11 @@ export default function WaybillDetailPage() {
                   Route
                 </p>
                 <p className="mt-1 text-base font-medium text-slate-900">
-                  {parkNames[waybill.origin_park_id] ||
-                    waybill.origin_park_id}{" "}
+                  {formatPark(waybill.origin_park_id, parks)}{" "}
                   <span aria-hidden="true" className="text-emerald-700">
                     →
                   </span>{" "}
-                  {parkNames[waybill.destination_park_id] ||
-                    waybill.destination_park_id}
+                  {formatPark(waybill.destination_park_id, parks)}
                 </p>
               </div>
               <div>
@@ -247,7 +184,7 @@ export default function WaybillDetailPage() {
                   Freight
                 </p>
                 <p className="mt-1 text-xl font-semibold text-slate-900">
-                  {naira(waybill.total_freight_kobo)}
+                  {formatNaira(waybill.total_freight_kobo)}
                 </p>
               </div>
               <div>
@@ -255,7 +192,7 @@ export default function WaybillDetailPage() {
                   Created
                 </p>
                 <p className="mt-1 text-sm text-slate-800">
-                  {formatCreatedAt(waybill.created_at)}
+                  {formatDate(waybill.created_at)}
                 </p>
               </div>
             </div>

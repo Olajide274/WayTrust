@@ -52,6 +52,8 @@ export type Park = {
   city: string;
 };
 
+let parksRequest: Promise<Park[]> | null = null;
+
 export type AgentWaybill = {
   id: string;
   agent_id: string;
@@ -310,7 +312,13 @@ export function getAgentProfile(): Promise<AgentProfile> {
 }
 
 export function getParks(): Promise<Park[]> {
-  return apiRequest<Park[]>("/api/v1/parks");
+  if (!parksRequest) {
+    parksRequest = apiRequest<Park[]>("/api/v1/parks").catch((error: unknown) => {
+      parksRequest = null;
+      throw error;
+    });
+  }
+  return parksRequest;
 }
 
 export function getAgentWaybills(): Promise<AgentWaybill[]> {

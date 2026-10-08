@@ -6,6 +6,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { PRODUCT_NAME } from "@/lib/branding";
 import { ApiError, AUTH_TOKEN_KEY, verifyWaybillPin } from "@/lib/api";
+import { formatPINVerification, userErrorMessage } from "@/lib/format";
 
 export default function DeliverPage() {
   const router = useRouter();
@@ -27,14 +28,14 @@ export default function DeliverPage() {
         return;
       }
       const data = await verifyWaybillPin(waybillId.trim(), pin.trim());
-      setSuccess(
-        data.message ||
-          `PIN verified · ${data.waybill_id || waybillId} · ${
-            data.state || "DELIVERED"
-          }`
-      );
+      setSuccess(formatPINVerification(data.state));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Network error");
+      console.error("Could not verify delivery PIN", err);
+      if (err instanceof ApiError && err.status === 401) {
+        router.replace("/");
+        return;
+      }
+      setError(userErrorMessage(err, "Could not verify the PIN. Check it and try again."));
     } finally {
       setLoading(false);
     }

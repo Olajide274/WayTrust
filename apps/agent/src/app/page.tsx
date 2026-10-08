@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { ApiError, AUTH_TOKEN_KEY, loginAgent } from "@/lib/api";
 import { PRODUCT_NAME } from "@/lib/branding";
+import { userErrorMessage } from "@/lib/format";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -22,7 +23,12 @@ export default function LoginPage() {
       localStorage.setItem(AUTH_TOKEN_KEY, data.token);
       router.push("/home");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Network error");
+      console.error("Agent sign-in failed", err);
+      setError(
+        err instanceof ApiError && err.status === 401
+          ? "Phone number or password is incorrect."
+          : userErrorMessage(err, "Could not sign in. Please try again."),
+      );
     } finally {
       setLoading(false);
     }

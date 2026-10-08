@@ -13,56 +13,9 @@ import {
   PROFILE_REFRESH_EVENT,
   type AgentWaybill,
   type AgentProfile,
+  type Park,
 } from "@/lib/api";
-
-function naira(kobo: number) {
-  return (Number(kobo || 0) / 100).toLocaleString("en-NG", {
-    style: "currency",
-    currency: "NGN",
-  });
-}
-
-function statusLabel(state: string) {
-  switch (state) {
-    case "ESCROW_LOCKED":
-      return "Locked";
-    case "IN_TRANSIT":
-      return "In transit";
-    case "DELIVERED":
-      return "Delivered";
-    case "DISBURSED":
-      return "Paid out";
-    case "DISPUTE_HOLD":
-      return "Dispute";
-    case "UNCLAIMED_HOLD":
-      return "Unclaimed";
-    case "CANCELLED":
-      return "Cancelled";
-    default:
-      return state || "Unknown";
-  }
-}
-
-function statusClass(state: string) {
-  switch (state) {
-    case "ESCROW_LOCKED":
-      return "bg-amber-50 text-amber-800 border-amber-200";
-    case "IN_TRANSIT":
-      return "bg-sky-50 text-sky-800 border-sky-200";
-    case "DELIVERED":
-      return "bg-emerald-50 text-emerald-800 border-emerald-200";
-    case "DISBURSED":
-      return "bg-teal-50 text-teal-900 border-teal-200";
-    case "DISPUTE_HOLD":
-      return "bg-red-50 text-red-800 border-red-200";
-    case "UNCLAIMED_HOLD":
-      return "bg-orange-50 text-orange-800 border-orange-200";
-    case "CANCELLED":
-      return "bg-slate-100 text-slate-600 border-slate-200";
-    default:
-      return "bg-slate-50 text-slate-600 border-slate-200";
-  }
-}
+import { formatNaira, formatPark, formatStatus, userErrorMessage } from "@/lib/format";
 
 export default function HomePage() {
   const router = useRouter();
@@ -72,7 +25,8 @@ export default function HomePage() {
   const [waybills, setWaybills] = useState<AgentWaybill[]>([]);
   const [waybillsError, setWaybillsError] = useState("");
   const [waybillsLoading, setWaybillsLoading] = useState(true);
-  const [parkNames, setParkNames] = useState<Record<string, string>>({});
+  const [parks, setParks] = useState<Park[]>([]);
+  const [parksLoading, setParksLoading] = useState(true);
 
   useEffect(() => {
     const token = localStorage.getItem("nurtw_token");
@@ -94,7 +48,8 @@ export default function HomePage() {
         if (e instanceof ApiError && e.status === 401) {
           router.replace("/");
         } else {
-          setError(e instanceof Error ? e.message : "Network error");
+          console.error("Could not load agent profile", e);
+          setError(userErrorMessage(e, "Could not load your profile. Please try again."));
         }
       } finally {
         if (active) setLoading(false);
@@ -115,15 +70,12 @@ export default function HomePage() {
     try {
       setWaybills(await getAgentWaybills());
     } catch (requestError) {
+      console.error("Could not load agent waybills", requestError);
       if (requestError instanceof ApiError && requestError.status === 401) {
         router.replace("/");
         return;
       }
-      setWaybillsError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Could not load your waybills.",
-      );
+      setWaybillsError(userErrorMessage(requestError, "Could not load your waybills. Please try again."));
     } finally {
       setWaybillsLoading(false);
     }
@@ -142,11 +94,10 @@ export default function HomePage() {
     getParks()
       .then((parks) => {
         if (!active) return;
-        setParkNames(
-          Object.fromEntries(parks.map((park) => [park.id, park.name])),
-        );
+        setParks(parks);
       })
       .catch((requestError: unknown) => {
+        console.error("Could not load parks for home", requestError);
         if (
           active &&
           requestError instanceof ApiError &&
@@ -154,6 +105,9 @@ export default function HomePage() {
         ) {
           router.replace("/");
         }
+      })
+      .finally(() => {
+        if (active) setParksLoading(false);
       });
 
     return () => {
@@ -168,8 +122,43 @@ export default function HomePage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <p className="text-sm text-slate-500">Checking your session…</p>
+      <main className="min-h-screen bg-slate-50 px-4 py-8">
+        <div
+          className="mx-auto max-w-lg space-y-4"
+          aria-busy="true"
+          aria-label="Loading home"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-2">
+              <div className="h-3 w-24 animate-pulse rounded bg-slate-200" />
+              <div className="h-8 w-32 animate-pulse rounded bg-slate-200" />
+            </div>
+            <div className="h-9 w-20 animate-pulse rounded-lg bg-slate-200" />
+          </div>
+          <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="h-4 w-28 animate-pulse rounded bg-slate-200" />
+            <div className="h-9 w-40 animate-pulse rounded bg-slate-200" />
+            <div className="mt-4 h-4 w-48 animate-pulse rounded bg-slate-200" />
+            <div className="h-4 w-56 animate-pulse rounded bg-slate-200" />
+          </section>
+          <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="h-6 w-28 animate-pulse rounded bg-slate-200" />
+            <div className="h-4 w-64 animate-pulse rounded bg-slate-100" />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="h-12 animate-pulse rounded-lg bg-slate-100" />
+              <div className="h-12 animate-pulse rounded-lg bg-slate-100" />
+            </div>
+          </section>
+          <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="h-6 w-28 animate-pulse rounded bg-slate-200" />
+            {[0, 1].map((item) => (
+              <div key={item} className="space-y-2 border-b border-slate-100 py-4">
+                <div className="h-4 w-3/4 animate-pulse rounded bg-slate-200" />
+                <div className="h-4 w-1/3 animate-pulse rounded bg-slate-100" />
+              </div>
+            ))}
+          </section>
+        </div>
       </main>
     );
   }
@@ -207,13 +196,17 @@ export default function HomePage() {
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <p className="text-sm text-slate-500">Wallet balance</p>
           <p className="mt-1 text-3xl font-semibold tracking-tight text-slate-900">
-            {agent ? naira(agent.wallet_balance_kobo || 0) : "—"}
+            {agent ? formatNaira(agent.wallet_balance_kobo || 0) : "—"}
           </p>
           <p className="mt-4 text-sm text-slate-700">
             {agent?.full_name || "Agent"}
           </p>
           <p className="text-sm text-slate-500">
-            {agent?.park_id || "—"}
+            {parksLoading ? (
+              <span className="inline-block h-4 w-32 animate-pulse rounded bg-slate-200 align-middle" />
+            ) : (
+              formatPark(agent?.park_id, parks)
+            )}
             {agent?.phone_number ? ` · ${agent.phone_number}` : ""}
           </p>
         </section>
@@ -242,9 +235,15 @@ export default function HomePage() {
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">My waybills</h2>
           {waybillsLoading ? (
-            <p className="mt-4 text-sm text-slate-500">
-              Loading your waybills…
-            </p>
+            <div className="mt-4 space-y-4" aria-busy="true" aria-label="Loading waybills">
+              {[0, 1, 2].map((item) => (
+                <div key={item} className="space-y-2 border-b border-slate-100 py-4 last:border-0">
+                  <div className="h-4 w-3/4 animate-pulse rounded bg-slate-200" />
+                  <div className="h-4 w-1/3 animate-pulse rounded bg-slate-100" />
+                  <div className="h-4 w-2/3 animate-pulse rounded bg-slate-100" />
+                </div>
+              ))}
+            </div>
           ) : waybillsError ? (
             <div className="mt-4">
               <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">
@@ -264,39 +263,39 @@ export default function HomePage() {
             </p>
           ) : (
             <ul className="mt-4 divide-y divide-slate-100">
-              {waybills.map((waybill) => (
-                <li key={waybill.id} className="py-4 first:pt-0 last:pb-0">
-                  <Link
-                    href={`/waybills/${encodeURIComponent(waybill.id)}`}
-                    aria-label={`View waybill ${waybill.id}`}
-                    className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="break-all text-sm font-semibold text-slate-900">
-                        {waybill.id}
+              {waybills.map((waybill) => {
+                const status = formatStatus(waybill.current_state);
+                return (
+                  <li key={waybill.id} className="py-4 first:pt-0 last:pb-0">
+                    <Link
+                      href={`/waybills/${encodeURIComponent(waybill.id)}`}
+                      aria-label={`View waybill ${waybill.id}`}
+                      className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="break-all text-sm font-semibold text-slate-900">
+                          {waybill.id}
+                        </p>
+                        <span
+                          className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${status.className}`}
+                        >
+                          {status.label}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm font-medium text-slate-800">
+                        {formatNaira(waybill.total_freight_kobo)}
                       </p>
-                      <span
-                        className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(waybill.current_state)}`}
-                      >
-                        {statusLabel(waybill.current_state)}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-sm font-medium text-slate-800">
-                      {naira(waybill.total_freight_kobo)}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {parkNames[waybill.origin_park_id] ||
-                        waybill.origin_park_id}{" "}
-                      →{" "}
-                      {parkNames[waybill.destination_park_id] ||
-                        waybill.destination_park_id}
-                    </p>
-                    <p className="mt-2 text-xs font-medium text-emerald-700">
-                      View details
-                    </p>
-                  </Link>
-                </li>
-              ))}
+                      <p className="mt-1 text-sm text-slate-500">
+                        {formatPark(waybill.origin_park_id, parks)} →{" "}
+                        {formatPark(waybill.destination_park_id, parks)}
+                      </p>
+                      <p className="mt-2 text-xs font-medium text-emerald-700">
+                        View details
+                      </p>
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

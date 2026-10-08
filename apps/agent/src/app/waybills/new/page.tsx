@@ -16,6 +16,7 @@ import {
   type CreatedWaybill,
   type Park,
 } from "@/lib/api";
+import { formatNaira, formatPark, userErrorMessage } from "@/lib/format";
 
 type FormValues = {
   senderPhone: string;
@@ -42,13 +43,6 @@ const initialForm: FormValues = {
   driverBankCode: "",
   driverDeclaredName: "",
 };
-
-function naira(kobo: number): string {
-  return (kobo / 100).toLocaleString("en-NG", {
-    style: "currency",
-    currency: "NGN",
-  });
-}
 
 function getBankDetailsKey(
   form: Pick<
@@ -193,15 +187,12 @@ export default function NewWaybillPage() {
     try {
       setParks(await getParks());
     } catch (requestError) {
+      console.error("Could not load parks for waybill form", requestError);
       if (requestError instanceof ApiError && requestError.status === 401) {
         router.replace("/");
         return;
       }
-      setParksError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Could not load parks.",
-      );
+      setParksError(userErrorMessage(requestError, "Could not load parks. Please try again."));
     } finally {
       setParksLoading(false);
     }
@@ -220,15 +211,12 @@ export default function NewWaybillPage() {
       })
       .catch((requestError: unknown) => {
         if (!active) return;
+        console.error("Could not load parks for waybill form", requestError);
         if (requestError instanceof ApiError && requestError.status === 401) {
           router.replace("/");
           return;
         }
-        setParksError(
-          requestError instanceof Error
-            ? requestError.message
-            : "Could not load parks.",
-        );
+        setParksError(userErrorMessage(requestError, "Could not load parks. Please try again."));
       })
       .finally(() => {
         if (active) setParksLoading(false);
@@ -287,12 +275,10 @@ export default function NewWaybillPage() {
       });
       setAccountResolution({ key, result: resolution });
     } catch (requestError) {
+      console.error("Could not verify driver bank account", requestError);
       setAccountResolutionError({
         key,
-        message:
-          requestError instanceof Error
-            ? requestError.message
-            : "Please check the account details and try again.",
+        message: userErrorMessage(requestError, "Please check the account details and try again."),
       });
     } finally {
       setResolvingAccount(false);
@@ -325,6 +311,7 @@ export default function NewWaybillPage() {
       setResult(created);
       window.dispatchEvent(new Event(PROFILE_REFRESH_EVENT));
     } catch (requestError) {
+      console.error("Could not create waybill", requestError);
       if (requestError instanceof ApiError && requestError.status === 401) {
         router.replace("/");
         return;
@@ -332,9 +319,7 @@ export default function NewWaybillPage() {
       setError(
         requestError instanceof ApiError && requestError.status === 402
           ? "Insufficient wallet balance. Fund the agent wallet before booking this waybill."
-          : requestError instanceof Error
-            ? `Could not book waybill: ${requestError.message}`
-            : "Could not book waybill. Please try again.",
+          : userErrorMessage(requestError, "Could not book the waybill. Please try again."),
       );
     } finally {
       setSubmitting(false);
@@ -387,6 +372,11 @@ export default function NewWaybillPage() {
               <p className="break-all text-lg font-semibold text-slate-900">
                 {result.waybill_id}
               </p>
+              <p className="mt-2 text-sm text-slate-600">
+                {formatPark(form.originParkId, parks)}{" "}
+                <span aria-hidden="true" className="text-emerald-700">→</span>{" "}
+                {formatPark(form.destinationParkId, parks)}
+              </p>
             </div>
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
@@ -411,7 +401,7 @@ export default function NewWaybillPage() {
             <div>
               <p className="text-sm text-slate-500">Remaining wallet balance</p>
               <p className="text-xl font-semibold text-slate-900">
-                {naira(result.agent_remaining_balance_kobo)}
+                {formatNaira(result.agent_remaining_balance_kobo)}
               </p>
             </div>
             <Link
@@ -476,7 +466,12 @@ export default function NewWaybillPage() {
                   </button>
                 </div>
               ) : parksLoading ? (
-                <p className="text-sm text-slate-500">Loading parks…</p>
+                <div aria-busy="true" aria-label="Loading parks" className="space-y-4">
+                  <div className="h-4 w-24 animate-pulse rounded bg-slate-200" />
+                  <div className="h-11 animate-pulse rounded-lg bg-slate-100" />
+                  <div className="h-4 w-32 animate-pulse rounded bg-slate-200" />
+                  <div className="h-11 animate-pulse rounded-lg bg-slate-100" />
+                </div>
               ) : parks.length === 0 ? (
                 <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
                   No active parks are available. Please try again later.
@@ -507,7 +502,7 @@ export default function NewWaybillPage() {
                         <option value="">Select a park</option>
                         {parks.map((park) => (
                           <option key={park.id} value={park.id}>
-                            {park.name}{park.city ? ` — ${park.city}` : ""}
+                            {formatPark(park.id, parks)}
                           </option>
                         ))}
                       </select>
@@ -593,7 +588,7 @@ export default function NewWaybillPage() {
                     role="alert"
                     className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700"
                   >
-                    Could not resolve this account:{" "}
+                    Could not resolve this account.{" "}
                     {accountResolutionError.message}
                   </p>
                 ) : accountResolution?.key === getBankDetailsKey(form) ? (
@@ -607,10 +602,7 @@ export default function NewWaybillPage() {
                   >
                     {!accountResolution.result.verified ? (
                       <p>
-                        Could not resolve this account
-                        {accountResolution.result.message
-                          ? `: ${accountResolution.result.message}`
-                          : "."}
+                        We could not verify this account. Check the details and try again.
                       </p>
                     ) : null}
                     <p>
