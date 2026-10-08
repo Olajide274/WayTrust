@@ -127,13 +127,18 @@ Base URL (local): `http://localhost:8080`
 | `GET` | `/api/v1/agent/waybills` | JWT | List mine |
 | `GET` | `/api/v1/waybills/status` | JWT | Status by id |
 | `POST` | `/api/v1/waybills/verify-pin` | JWT | PIN → DELIVERED |
+| `POST` | `/api/v1/waybills/start-transit` | JWT | Start transit and unclaimed timeout |
+| `POST` | `/api/v1/waybills/report-refusal` | JWT | Record receiver refusal; hold escrow |
 | `POST` | `/api/v1/waybills/disburse` | JWT | Payout |
+| `POST` | `/api/v1/admin/waybills/resolve` | Admin JWT | Release held funds to driver or refund booking agent |
 | `POST` | `/api/v1/ussd` | Gateway | USSD entry |
 | `GET` | `/app/` | No | Thin agent PWA |
 
 \* Tighten public register for production.
 
 Amounts are always **integer kobo**.
+
+Receiver refusal reports are limited to the owning agent while a waybill is `IN_TRANSIT`. Reporting a refusal changes its state to `DISPUTE_HOLD` and keeps funds held until an administrator resolves the waybill to the driver or refunds the booking agent.
 
 ---
 

@@ -27,6 +27,7 @@ Amounts are in kobo. Token is stored in localStorage as nurtw_token.
 - All API calls go through a typed client in apps/agent/src/lib; no fetch calls scattered in components.
 - Every screen handles loading, error, and empty states.
 - No new dependencies without asking.
+- After a database reset, run `./start-dev.sh`, then `./scripts/seed-dev.sh`. The seed script is dev-only and must never be run against production.
 - Mobile-first: clerks use phones.
 
 ## Roadmap

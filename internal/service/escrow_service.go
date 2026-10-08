@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/nurtw/escrow/internal/domain"
@@ -15,10 +17,13 @@ import (
 )
 
 var (
-	ErrInvalidFreightAmount = errors.New("total_freight_kobo must be greater than zero")
-	ErrWaybillNotDelivered  = errors.New("cannot disburse escrow: parcel must be in DELIVERED state")
-	ErrInvalidContactInfo   = errors.New("sender, receiver, and driver phone numbers are required")
-	ErrInvalidNUBAN         = errors.New("account number must be exactly 10 numeric digits")
+	ErrInvalidFreightAmount         = errors.New("total_freight_kobo must be greater than zero")
+	ErrWaybillNotDelivered          = errors.New("cannot disburse escrow: parcel must be in DELIVERED state")
+	ErrInvalidContactInfo           = errors.New("sender, receiver, and driver phone numbers are required")
+	ErrInvalidNUBAN                 = errors.New("account number must be exactly 10 numeric digits")
+	ErrInvalidReceiverRefusalReason = errors.New("receiver refusal reason must be between 1 and 500 characters")
+	ErrInvalidResolutionReason      = errors.New("resolution reason must be between 1 and 500 characters")
+	ErrPayoutTransferFailed         = errors.New("upstream payout transfer failed")
 )
 
 type EscrowService struct {
@@ -158,6 +163,16 @@ type DisbursePayoutResult struct {
 	DisbursedAt          time.Time
 }
 
+type ResolveHeldWaybillResult struct {
+	WaybillID         string
+	Outcome           string
+	State             string
+	ResolvedAt        time.Time
+	WalletBalanceKobo int64
+	TransferReference string
+	DriverPayoutKobo  int64
+}
+
 func (s *EscrowService) DisbursePayout(ctx context.Context, waybillID, idempotencyKey string) (*DisbursePayoutResult, error) {
 	w, err := s.repo.GetWaybill(ctx, waybillID)
 	if err != nil {
@@ -201,6 +216,61 @@ func (s *EscrowService) DisbursePayout(ctx context.Context, waybillID, idempoten
 	}, nil
 }
 
+func (s *EscrowService) ResolveHeldWaybill(
+	ctx context.Context,
+	adminID string,
+	waybillID string,
+	outcome string,
+	reason string,
+) (*ResolveHeldWaybillResult, error) {
+	if adminID == "" || waybillID == "" {
+		return nil, errors.New("admin_id and waybill_id are required")
+	}
+	reason = strings.TrimSpace(reason)
+	if length := utf8.RuneCountInString(reason); length < 1 || length > 500 {
+		return nil, ErrInvalidResolutionReason
+	}
+	if outcome != domain.ResolutionReleaseToDriver && outcome != domain.ResolutionRefundToAgent {
+		return nil, repository.ErrInvalidResolutionOutcome
+	}
+
+	payoutReference := fmt.Sprintf("ADMIN_RESOLVE_%s", waybillID)
+	var payout repository.HeldWaybillPayout
+	if outcome == domain.ResolutionReleaseToDriver {
+		payout = func(
+			ctx context.Context,
+			accountName, accountNo, bankCode string,
+			amountKobo int64,
+			reference string,
+		) (string, error) {
+			transferRef, err := s.payoutDisburser.InitiateDriverPayout(
+				ctx, accountName, accountNo, bankCode, amountKobo, reference,
+			)
+			if err != nil {
+				return "", fmt.Errorf("%w: %w", ErrPayoutTransferFailed, err)
+			}
+			return transferRef, nil
+		}
+	}
+
+	resolution, err := s.repo.ResolveHeldWaybillTx(
+		ctx, waybillID, adminID, outcome, reason, payoutReference, payout,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResolveHeldWaybillResult{
+		WaybillID:         waybillID,
+		Outcome:           resolution.Outcome,
+		State:             resolution.State,
+		ResolvedAt:        resolution.ResolvedAt,
+		WalletBalanceKobo: resolution.WalletBalanceKobo,
+		TransferReference: resolution.TransferReference,
+		DriverPayoutKobo:  resolution.Splits.DriverPayoutKobo,
+	}, nil
+}
+
 func (s *EscrowService) CancelWaybill(ctx context.Context, agentID, waybillID, idempotencyKey string) (int64, error) {
 	if agentID == "" || waybillID == "" {
 		return 0, fmt.Errorf("agent_id and waybill_id are required")
@@ -209,6 +279,24 @@ func (s *EscrowService) CancelWaybill(ctx context.Context, agentID, waybillID, i
 		idempotencyKey = fmt.Sprintf("CANCEL_%s", waybillID)
 	}
 	return s.repo.CancelEscrowTx(ctx, waybillID, agentID, idempotencyKey)
+}
+
+func (s *EscrowService) StartTransit(ctx context.Context, agentID, waybillID string) (time.Time, error) {
+	if agentID == "" || waybillID == "" {
+		return time.Time{}, fmt.Errorf("agent_id and waybill_id are required")
+	}
+	return s.repo.StartTransitTx(ctx, waybillID, agentID)
+}
+
+func (s *EscrowService) ReportReceiverRefusal(ctx context.Context, agentID, waybillID, reason string) (time.Time, error) {
+	if agentID == "" || waybillID == "" {
+		return time.Time{}, fmt.Errorf("agent_id and waybill_id are required")
+	}
+	reason = strings.TrimSpace(reason)
+	if length := utf8.RuneCountInString(reason); length < 1 || length > 500 {
+		return time.Time{}, ErrInvalidReceiverRefusalReason
+	}
+	return s.repo.ReportReceiverRefusalTx(ctx, waybillID, agentID, reason)
 }
 
 // GetWaybillStatus returns the current waybill record for USSD status checks

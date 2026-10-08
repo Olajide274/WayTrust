@@ -43,6 +43,12 @@ const (
 	WaybillStateDisputeHold   = "DISPUTE_HOLD"
 	WaybillStateUnclaimedHold = "UNCLAIMED_HOLD"
 	WaybillStateCancelled     = "CANCELLED"
+	WaybillStateRefunded      = "REFUNDED"
+)
+
+const (
+	ResolutionReleaseToDriver = "RELEASE_TO_DRIVER"
+	ResolutionRefundToAgent   = "REFUND_TO_AGENT"
 )
 
 // CorridorFeePolicy defines the dynamic rules for a specific route corridor
@@ -127,23 +133,25 @@ func (c *DefaultFeeCalculator) Calculate(freightKobo int64, policy CorridorFeePo
 
 // Waybill entity matching the PostgreSQL ledger schema
 type Waybill struct {
-	ID                 string    `json:"id"`
-	AgentID            string    `json:"agent_id"`
-	SenderPhone        string    `json:"sender_phone"`
-	ReceiverPhone      string    `json:"receiver_phone"`
-	DriverPhone        string    `json:"driver_phone"`
-	VehicleRegNumber   string    `json:"vehicle_reg_number"`
-	OriginParkID       string    `json:"origin_park_id"`
-	DestinationParkID  string    `json:"destination_park_id"`
-	TotalFreightKobo   int64     `json:"total_freight_kobo"`
-	PinHash            string    `json:"-"`
-	FailedPinAttempts  int       `json:"failed_pin_attempts"`
-	DriverBankCode     string    `json:"driver_bank_code"`
-	DriverAccountNum   string    `json:"driver_account_number"`
-	DriverVerifiedName string    `json:"driver_verified_name"`
-	CurrentState       string    `json:"current_state"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                        string     `json:"id"`
+	AgentID                   string     `json:"agent_id"`
+	SenderPhone               string     `json:"sender_phone"`
+	ReceiverPhone             string     `json:"receiver_phone"`
+	DriverPhone               string     `json:"driver_phone"`
+	VehicleRegNumber          string     `json:"vehicle_reg_number"`
+	OriginParkID              string     `json:"origin_park_id"`
+	DestinationParkID         string     `json:"destination_park_id"`
+	TotalFreightKobo          int64      `json:"total_freight_kobo"`
+	PinHash                   string     `json:"-"`
+	FailedPinAttempts         int        `json:"failed_pin_attempts"`
+	DriverBankCode            string     `json:"driver_bank_code"`
+	DriverAccountNum          string     `json:"driver_account_number"`
+	DriverVerifiedName        string     `json:"driver_verified_name"`
+	CurrentState              string     `json:"current_state"`
+	ReceiverRefusalReason     string     `json:"receiver_refusal_reason,omitempty"`
+	ReceiverRefusalReportedAt *time.Time `json:"receiver_refusal_reported_at,omitempty"`
+	CreatedAt                 time.Time  `json:"created_at"`
+	UpdatedAt                 time.Time  `json:"updated_at"`
 }
 
 // Agent entity representing the pre-funded motor park clerk
@@ -183,4 +191,30 @@ func AssertCanCancel(currentState string) error {
 		return fmt.Errorf("%w: current state is %s", ErrInvalidStateTransition, currentState)
 	}
 	return nil
+}
+
+// CanStartTransit reports whether a waybill may enter transit.
+func CanStartTransit(currentState string) bool {
+	return currentState == WaybillStateEscrowLocked
+}
+
+// CanReportReceiverRefusal reports whether a receiver refusal may be reported.
+func CanReportReceiverRefusal(currentState string) bool {
+	return currentState == WaybillStateInTransit
+}
+
+// HeldWaybillResolutionState returns the terminal state for a valid held-waybill resolution.
+func HeldWaybillResolutionState(currentState, outcome string) (string, error) {
+	if currentState != WaybillStateDisputeHold && currentState != WaybillStateUnclaimedHold {
+		return "", fmt.Errorf("%w: cannot resolve waybill in %s", ErrInvalidStateTransition, currentState)
+	}
+
+	switch outcome {
+	case ResolutionReleaseToDriver:
+		return WaybillStateDisbursed, nil
+	case ResolutionRefundToAgent:
+		return WaybillStateRefunded, nil
+	default:
+		return "", fmt.Errorf("invalid waybill resolution outcome: %s", outcome)
+	}
 }

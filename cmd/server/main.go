@@ -27,6 +27,11 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
+const (
+	unclaimedTransitTimeout = 24 * time.Hour
+	unclaimedSweepInterval  = time.Minute
+)
+
 func getEnv(key, fallback string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
@@ -77,6 +82,30 @@ func (m *memoryPinRateLimiter) ResetAttempts(ctx context.Context, waybillID stri
 	defer m.mu.Unlock()
 	delete(m.attempts, waybillID)
 	return nil
+}
+
+func runUnclaimedWaybillSweep(ctx context.Context, repo *repository.EscrowRepository, done chan<- struct{}) {
+	defer close(done)
+	ticker := time.NewTicker(unclaimedSweepInterval)
+	defer ticker.Stop()
+
+	for {
+		held, err := repo.HoldExpiredTransitWaybills(ctx, unclaimedTransitTimeout)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Printf("[WAYBILL] Failed to process expired transit waybills: %v", err)
+		} else if held > 0 {
+			log.Printf("[WAYBILL] Moved %d expired transit waybill(s) into UNCLAIMED_HOLD", held)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func main() {
@@ -136,6 +165,9 @@ func main() {
 	}
 
 	repo := repository.NewEscrowRepository(db)
+	serviceCtx, stopService := context.WithCancel(context.Background())
+	unclaimedSweepDone := make(chan struct{})
+	go runUnclaimedWaybillSweep(serviceCtx, repo, unclaimedSweepDone)
 	nibssResolver := resolver.NewPaystackNibssResolver(7 * time.Second)
 	payoutDisburser := resolver.NewPaystackPayoutDisburser(10 * time.Second)
 	smsDispatcher := resolver.NewTermiiSMSDispatcher(8 * time.Second)
@@ -178,7 +210,10 @@ func main() {
 	mux.HandleFunc("/api/v1/bank/resolve", security.AuthMiddleware(restHandler.HandleResolveDriver))
 	mux.HandleFunc("/api/v1/waybills", security.AuthMiddleware(restHandler.HandleCreateWaybill))
 	mux.HandleFunc("/api/v1/waybills/verify-pin", security.AuthMiddleware(restHandler.HandleVerifyPin))
+	mux.HandleFunc("/api/v1/waybills/start-transit", security.AuthMiddleware(restHandler.HandleStartTransit))
+	mux.HandleFunc("/api/v1/waybills/report-refusal", security.AuthMiddleware(restHandler.HandleReportReceiverRefusal))
 	mux.HandleFunc("/api/v1/waybills/disburse", security.AuthMiddleware(restHandler.HandleDisburse))
+	mux.HandleFunc("/api/v1/admin/waybills/resolve", security.AuthMiddleware(restHandler.HandleResolveHeldWaybill))
 	mux.HandleFunc("/api/v1/waybills/status", security.AuthMiddleware(restHandler.HandleWaybillStatus))
 	mux.HandleFunc("/api/v1/agent/waybills", security.AuthMiddleware(restHandler.HandleListAgentWaybills))
 	mux.HandleFunc("/api/v1/agent/fund-wallet", security.AuthMiddleware(restHandler.HandleFundWallet))
@@ -208,6 +243,8 @@ func main() {
 
 	<-shutdownChan
 	log.Println("Shutting down servers gracefully...")
+	stopService()
+	<-unclaimedSweepDone
 	grpcServer.GracefulStop()
 	_ = httpServer.Close()
 	log.Println("All services stopped.")

@@ -5,19 +5,36 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/nurtw/escrow/internal/domain"
 	"golang.org/x/crypto/bcrypt"
 )
 
 var (
-	ErrWaybillNotFound  = errors.New("waybill record not found")
-	ErrAgentNotFound    = errors.New("agent record not found or currently inactive")
-	ErrAlreadyDisbursed = errors.New("waybill escrow has already been disbursed")
-	ErrInvalidPayout    = errors.New("waybill must be in DELIVERED state prior to disbursement")
-	ErrNotWaybillOwner = errors.New("waybill does not belong to this agent")
-	ErrCannotCancel    = errors.New("waybill cannot be cancelled in its current state")
+	ErrWaybillNotFound             = errors.New("waybill record not found")
+	ErrAgentNotFound               = errors.New("agent record not found or currently inactive")
+	ErrAlreadyDisbursed            = errors.New("waybill escrow has already been disbursed")
+	ErrInvalidPayout               = errors.New("waybill must be in DELIVERED state prior to disbursement")
+	ErrNotWaybillOwner             = errors.New("waybill does not belong to this agent")
+	ErrCannotCancel                = errors.New("waybill cannot be cancelled in its current state")
+	ErrCannotStartTransit          = errors.New("waybill cannot enter transit in its current state")
+	ErrCannotReportReceiverRefusal = errors.New("receiver refusal cannot be reported in the waybill's current state")
+	ErrWaybillNotHeld              = errors.New("waybill is not in a resolvable held state")
+	ErrWaybillAlreadyResolved      = errors.New("waybill has already been resolved")
+	ErrInvalidResolutionOutcome    = errors.New("invalid waybill resolution outcome")
 )
+
+type HeldWaybillPayout func(context.Context, string, string, string, int64, string) (string, error)
+
+type HeldWaybillResolution struct {
+	Outcome           string
+	State             string
+	ResolvedAt        time.Time
+	WalletBalanceKobo int64
+	TransferReference string
+	Splits            domain.SplitBreakdown
+}
 
 type EscrowRepository struct {
 	db *sql.DB
@@ -270,75 +287,8 @@ func (r *EscrowRepository) DisburseEscrowTx(
 	}
 	splits.TotalFreightKobo = totalFreight
 
-	// 3. Mark waybill as DISBURSED
-	updateWaybillQuery := `
-		UPDATE waybills
-		SET current_state = $1, updated_at = NOW()
-		WHERE id = $2
-	`
-	if _, err := tx.ExecContext(ctx, updateWaybillQuery, domain.WaybillStateDisbursed, waybillID); err != nil {
-		return nil, fmt.Errorf("failed to update waybill state to DISBURSED: %w", err)
-	}
-
-	// 4. Mark payout_splits record with transfer reference and timestamp
-	updateSplitQuery := `
-		UPDATE payout_splits
-		SET driver_transfer_ref = $1, disbursed_at = NOW()
-		WHERE waybill_id = $2
-	`
-	if _, err := tx.ExecContext(ctx, updateSplitQuery, transferReference, waybillID); err != nil {
-		return nil, fmt.Errorf("failed to record payout split disbursement: %w", err)
-	}
-
-	// 5. Credit agent pre-funded wallet with earned commission
-	var agentBalance int64
-	lockAgentQuery := `
-		SELECT wallet_balance_kobo 
-		FROM agents 
-		WHERE id = $1 
-		FOR UPDATE
-	`
-	if err := tx.QueryRowContext(ctx, lockAgentQuery, agentID).Scan(&agentBalance); err != nil {
-		return nil, fmt.Errorf("failed to lock agent for commission credit: %w", err)
-	}
-
-	newAgentBalance := agentBalance + splits.AgentCommissionKobo
-	creditAgentQuery := `
-		UPDATE agents 
-		SET wallet_balance_kobo = $1, updated_at = NOW() 
-		WHERE id = $2
-	`
-	if _, err := tx.ExecContext(ctx, creditAgentQuery, newAgentBalance, agentID); err != nil {
-		return nil, fmt.Errorf("failed to credit agent commission: %w", err)
-	}
-
-	// 6. Record immutable audit ledger entry for agent commission
-	insertAgentLedger := `
-		INSERT INTO escrow_ledgers (
-			waybill_id, transaction_type, amount_kobo, balance_after_kobo, description, idempotency_key, created_at
-		) VALUES ($1, 'AGENT_COMMISSION', $2, $3, $4, $5, NOW())
-	`
-	agentLedgerKey := fmt.Sprintf("COMMISSION_%s_%s", waybillID, idempotencyKey)
-	_, err = tx.ExecContext(ctx, insertAgentLedger,
-		waybillID, splits.AgentCommissionKobo, newAgentBalance, "Agent commission settlement credited to wallet", agentLedgerKey,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write agent commission ledger: %w", err)
-	}
-
-	// 7. Record immutable audit ledger entry for driver payout
-	insertDisburseLedger := `
-		INSERT INTO escrow_ledgers (
-			waybill_id, transaction_type, amount_kobo, balance_after_kobo, description, idempotency_key, created_at
-		) VALUES ($1, 'DISBURSEMENT_SPLIT', $2, 0, $3, $4, NOW())
-	`
-	disburseDesc := fmt.Sprintf("Payout disbursed: Driver=%d, Union=%d, Treasury=%d Ref=%s",
-		splits.DriverPayoutKobo, splits.UnionDuesKobo, splits.PlatformTreasuryKobo, transferReference)
-	_, err = tx.ExecContext(ctx, insertDisburseLedger,
-		waybillID, splits.DriverPayoutKobo, disburseDesc, idempotencyKey,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write disbursement ledger: %w", err)
+	if err := applyPayoutSettlementTx(ctx, tx, waybillID, agentID, transferReference, idempotencyKey, splits); err != nil {
+		return nil, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -346,6 +296,216 @@ func (r *EscrowRepository) DisburseEscrowTx(
 	}
 
 	return &splits, nil
+}
+
+func applyPayoutSettlementTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	waybillID string,
+	agentID string,
+	transferReference string,
+	idempotencyKey string,
+	splits domain.SplitBreakdown,
+) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE waybills
+		SET current_state = $1, updated_at = NOW()
+		WHERE id = $2
+	`, domain.WaybillStateDisbursed, waybillID); err != nil {
+		return fmt.Errorf("failed to update waybill state to DISBURSED: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE payout_splits
+		SET driver_transfer_ref = $1, disbursed_at = NOW()
+		WHERE waybill_id = $2
+	`, transferReference, waybillID); err != nil {
+		return fmt.Errorf("failed to record payout split disbursement: %w", err)
+	}
+
+	var agentBalance int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT wallet_balance_kobo
+		FROM agents
+		WHERE id = $1
+		FOR UPDATE
+	`, agentID).Scan(&agentBalance); err != nil {
+		return fmt.Errorf("failed to lock agent for commission credit: %w", err)
+	}
+
+	newAgentBalance := agentBalance + splits.AgentCommissionKobo
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE agents
+		SET wallet_balance_kobo = $1, updated_at = NOW()
+		WHERE id = $2
+	`, newAgentBalance, agentID); err != nil {
+		return fmt.Errorf("failed to credit agent commission: %w", err)
+	}
+
+	agentLedgerKey := fmt.Sprintf("COMMISSION_%s_%s", waybillID, idempotencyKey)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO escrow_ledgers (
+			waybill_id, transaction_type, amount_kobo, balance_after_kobo, description, idempotency_key, created_at
+		) VALUES ($1, 'AGENT_COMMISSION', $2, $3, $4, $5, NOW())
+	`, waybillID, splits.AgentCommissionKobo, newAgentBalance, "Agent commission settlement credited to wallet", agentLedgerKey); err != nil {
+		return fmt.Errorf("failed to write agent commission ledger: %w", err)
+	}
+
+	disburseDesc := fmt.Sprintf("Payout disbursed: Driver=%d, Union=%d, Treasury=%d Ref=%s",
+		splits.DriverPayoutKobo, splits.UnionDuesKobo, splits.PlatformTreasuryKobo, transferReference)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO escrow_ledgers (
+			waybill_id, transaction_type, amount_kobo, balance_after_kobo, description, idempotency_key, created_at
+		) VALUES ($1, 'DISBURSEMENT_SPLIT', $2, 0, $3, $4, NOW())
+	`, waybillID, splits.DriverPayoutKobo, disburseDesc, idempotencyKey); err != nil {
+		return fmt.Errorf("failed to write disbursement ledger: %w", err)
+	}
+
+	return nil
+}
+
+// ResolveHeldWaybillTx commits a held-waybill resolution and its financial records atomically.
+// The payout callback runs while the waybill row is locked so concurrent resolutions cannot pay twice.
+func (r *EscrowRepository) ResolveHeldWaybillTx(
+	ctx context.Context,
+	waybillID string,
+	adminID string,
+	outcome string,
+	reason string,
+	payoutReference string,
+	payout HeldWaybillPayout,
+) (*HeldWaybillResolution, error) {
+	if outcome != domain.ResolutionReleaseToDriver && outcome != domain.ResolutionRefundToAgent {
+		return nil, ErrInvalidResolutionOutcome
+	}
+
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin waybill resolution transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var currentState, agentID, driverName, driverAccount, driverBank string
+	var totalFreight int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT current_state, agent_id::text, total_freight_kobo,
+		       driver_verified_name, driver_account_number, driver_bank_code
+		FROM waybills
+		WHERE id = $1
+		FOR UPDATE
+	`, waybillID).Scan(&currentState, &agentID, &totalFreight, &driverName, &driverAccount, &driverBank)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrWaybillNotFound
+		}
+		return nil, fmt.Errorf("failed to lock waybill for resolution: %w", err)
+	}
+
+	if currentState == domain.WaybillStateDisbursed || currentState == domain.WaybillStateRefunded {
+		return nil, ErrWaybillAlreadyResolved
+	}
+	targetState, err := domain.HeldWaybillResolutionState(currentState, outcome)
+	if err != nil {
+		return nil, ErrWaybillNotHeld
+	}
+
+	result := &HeldWaybillResolution{Outcome: outcome, State: targetState}
+	if outcome == domain.ResolutionReleaseToDriver {
+		if payout == nil {
+			return nil, errors.New("driver payout callback is required for release resolution")
+		}
+
+		splits, err := lockPayoutSplitTx(ctx, tx, waybillID, totalFreight)
+		if err != nil {
+			return nil, err
+		}
+		transferReference, err := payout(ctx, driverName, driverAccount, driverBank, splits.DriverPayoutKobo, payoutReference)
+		if err != nil {
+			return nil, err
+		}
+		if err := applyPayoutSettlementTx(ctx, tx, waybillID, agentID, transferReference, payoutReference, splits); err != nil {
+			return nil, err
+		}
+		result.TransferReference = transferReference
+		result.Splits = splits
+	} else {
+		var agentBalance int64
+		if err := tx.QueryRowContext(ctx, `
+			SELECT wallet_balance_kobo
+			FROM agents
+			WHERE id = $1
+			FOR UPDATE
+		`, agentID).Scan(&agentBalance); err != nil {
+			return nil, fmt.Errorf("failed to lock booking agent wallet for refund: %w", err)
+		}
+
+		newBalance := agentBalance + totalFreight
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE agents
+			SET wallet_balance_kobo = $1, updated_at = NOW()
+			WHERE id = $2
+		`, newBalance, agentID); err != nil {
+			return nil, fmt.Errorf("failed to credit booking agent wallet: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE waybills
+			SET current_state = $1, updated_at = NOW()
+			WHERE id = $2
+		`, targetState, waybillID); err != nil {
+			return nil, fmt.Errorf("failed to mark waybill refunded: %w", err)
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO escrow_ledgers (
+				waybill_id, transaction_type, amount_kobo, balance_after_kobo, description, idempotency_key, created_at
+			) VALUES ($1, 'REFUND', $2, $3, $4, $5, NOW())
+		`, waybillID, totalFreight, newBalance,
+			fmt.Sprintf("Held waybill %s resolved; freight returned to booking agent", waybillID),
+			fmt.Sprintf("RESOLUTION_REFUND_%s", waybillID)); err != nil {
+			return nil, fmt.Errorf("failed to write held-waybill refund ledger: %w", err)
+		}
+		result.WalletBalanceKobo = newBalance
+	}
+
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO waybill_resolutions (waybill_id, resolved_by, outcome, reason)
+		VALUES ($1, $2, $3, $4)
+		RETURNING resolved_at
+	`, waybillID, adminID, outcome, reason).Scan(&result.ResolvedAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to record waybill resolution: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("waybill resolution commit failed: %w", err)
+	}
+	return result, nil
+}
+
+func lockPayoutSplitTx(ctx context.Context, tx *sql.Tx, waybillID string, totalFreight int64) (domain.SplitBreakdown, error) {
+	var splits domain.SplitBreakdown
+	var disbursedAt sql.NullTime
+	err := tx.QueryRowContext(ctx, `
+		SELECT driver_payout_kobo, agent_commission_kobo, union_dues_kobo,
+		       platform_treasury_kobo, disbursed_at
+		FROM payout_splits
+		WHERE waybill_id = $1
+		FOR UPDATE
+	`, waybillID).Scan(
+		&splits.DriverPayoutKobo,
+		&splits.AgentCommissionKobo,
+		&splits.UnionDuesKobo,
+		&splits.PlatformTreasuryKobo,
+		&disbursedAt,
+	)
+	if err != nil {
+		return domain.SplitBreakdown{}, fmt.Errorf("failed to retrieve payout split: %w", err)
+	}
+	if disbursedAt.Valid {
+		return domain.SplitBreakdown{}, ErrWaybillAlreadyResolved
+	}
+	splits.TotalFreightKobo = totalFreight
+	return splits, nil
 }
 
 // CancelEscrowTx returns locked freight to the owning agent and marks the waybill CANCELLED.
@@ -456,31 +616,155 @@ func (r *EscrowRepository) CancelEscrowTx(
 	return newBalance, nil
 }
 
+// StartTransitTx moves an owned, escrow-locked waybill into transit exactly once.
+func (r *EscrowRepository) StartTransitTx(ctx context.Context, waybillID, agentID string) (time.Time, error) {
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var currentState string
+	var ownerID string
+	err = tx.QueryRowContext(ctx, `
+		SELECT current_state, agent_id::text
+		FROM waybills
+		WHERE id = $1
+		FOR UPDATE
+	`, waybillID).Scan(&currentState, &ownerID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return time.Time{}, ErrWaybillNotFound
+		}
+		return time.Time{}, fmt.Errorf("failed to lock waybill: %w", err)
+	}
+	if ownerID != agentID {
+		return time.Time{}, ErrNotWaybillOwner
+	}
+	if !domain.CanStartTransit(currentState) {
+		return time.Time{}, fmt.Errorf("%w: %s", ErrCannotStartTransit, currentState)
+	}
+
+	var inTransitAt time.Time
+	err = tx.QueryRowContext(ctx, `
+		UPDATE waybills
+		SET current_state = $1, in_transit_at = NOW(), updated_at = NOW()
+		WHERE id = $2
+		RETURNING in_transit_at
+	`, domain.WaybillStateInTransit, waybillID).Scan(&inTransitAt)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to start waybill transit: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return time.Time{}, fmt.Errorf("failed to commit transit start: %w", err)
+	}
+	return inTransitAt, nil
+}
+
+// HoldExpiredTransitWaybills moves unclaimed transit waybills past the timeout into UNCLAIMED_HOLD.
+func (r *EscrowRepository) HoldExpiredTransitWaybills(ctx context.Context, timeout time.Duration) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE waybills
+		SET current_state = $1, updated_at = NOW()
+		WHERE current_state = $2
+		  AND in_transit_at <= NOW() - ($3 * INTERVAL '1 second')
+	`, domain.WaybillStateUnclaimedHold, domain.WaybillStateInTransit, int64(timeout.Seconds()))
+	if err != nil {
+		return 0, fmt.Errorf("failed to hold expired transit waybills: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to count held waybills: %w", err)
+	}
+	return rowsAffected, nil
+}
+
+// ReportReceiverRefusalTx records the refusal and holds the waybill atomically.
+func (r *EscrowRepository) ReportReceiverRefusalTx(ctx context.Context, waybillID, agentID, reason string) (time.Time, error) {
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var currentState string
+	var ownerID string
+	err = tx.QueryRowContext(ctx, `
+		SELECT current_state, agent_id::text
+		FROM waybills
+		WHERE id = $1
+		FOR UPDATE
+	`, waybillID).Scan(&currentState, &ownerID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return time.Time{}, ErrWaybillNotFound
+		}
+		return time.Time{}, fmt.Errorf("failed to lock waybill: %w", err)
+	}
+	if ownerID != agentID {
+		return time.Time{}, ErrNotWaybillOwner
+	}
+	if !domain.CanReportReceiverRefusal(currentState) {
+		return time.Time{}, fmt.Errorf("%w: %s", ErrCannotReportReceiverRefusal, currentState)
+	}
+
+	var reportedAt time.Time
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO receiver_refusal_reports (waybill_id, agent_id, reason)
+		VALUES ($1, $2, $3)
+		RETURNING created_at
+	`, waybillID, agentID, reason).Scan(&reportedAt)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to record receiver refusal: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE waybills
+		SET current_state = $1, updated_at = NOW()
+		WHERE id = $2
+	`, domain.WaybillStateDisputeHold, waybillID); err != nil {
+		return time.Time{}, fmt.Errorf("failed to place waybill on dispute hold: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return time.Time{}, fmt.Errorf("failed to commit receiver refusal report: %w", err)
+	}
+	return reportedAt, nil
+}
+
 // GetWaybill retrieves the waybill record by ID
 func (r *EscrowRepository) GetWaybill(ctx context.Context, waybillID string) (*domain.Waybill, error) {
 	query := `
 		SELECT 
-			id, agent_id, sender_phone, receiver_phone, driver_phone,
-			vehicle_reg_number, origin_park_id, destination_park_id,
-			total_freight_kobo, failed_pin_attempts, driver_bank_code,
-			driver_account_number, driver_verified_name, current_state,
-			created_at, updated_at
-		FROM waybills
-		WHERE id = $1
+			w.id, w.agent_id, w.sender_phone, w.receiver_phone, w.driver_phone,
+			w.vehicle_reg_number, w.origin_park_id, w.destination_park_id,
+			w.total_freight_kobo, w.failed_pin_attempts, w.driver_bank_code,
+			w.driver_account_number, w.driver_verified_name, w.current_state,
+			w.created_at, w.updated_at, rr.reason, rr.created_at
+		FROM waybills w
+		LEFT JOIN receiver_refusal_reports rr ON rr.waybill_id = w.id
+		WHERE w.id = $1
 	`
 	var w domain.Waybill
+	var refusalReason sql.NullString
+	var refusalReportedAt sql.NullTime
 	err := r.db.QueryRowContext(ctx, query, waybillID).Scan(
 		&w.ID, &w.AgentID, &w.SenderPhone, &w.ReceiverPhone, &w.DriverPhone,
 		&w.VehicleRegNumber, &w.OriginParkID, &w.DestinationParkID,
 		&w.TotalFreightKobo, &w.FailedPinAttempts, &w.DriverBankCode,
 		&w.DriverAccountNum, &w.DriverVerifiedName, &w.CurrentState,
-		&w.CreatedAt, &w.UpdatedAt,
+		&w.CreatedAt, &w.UpdatedAt, &refusalReason, &refusalReportedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrWaybillNotFound
 		}
 		return nil, err
+	}
+	if refusalReason.Valid {
+		w.ReceiverRefusalReason = refusalReason.String
+	}
+	if refusalReportedAt.Valid {
+		w.ReceiverRefusalReportedAt = &refusalReportedAt.Time
 	}
 	return &w, nil
 }

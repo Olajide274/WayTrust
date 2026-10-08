@@ -590,6 +590,200 @@ type CancelWaybillRequest struct {
 	IdempotencyKey string `json:"idempotency_key"`
 }
 
+type StartTransitRequest struct {
+	WaybillID string `json:"waybill_id"`
+}
+
+func (h *RESTHandler) HandleStartTransit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	agentID := security.AgentIDFromContext(r.Context())
+	if agentID == "" {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	var req StartTransitRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.WaybillID = strings.TrimSpace(req.WaybillID)
+	if req.WaybillID == "" {
+		writeError(w, http.StatusBadRequest, "waybill_id is required")
+		return
+	}
+	if !strings.HasPrefix(req.WaybillID, "WB-") {
+		req.WaybillID = "WB-" + req.WaybillID
+	}
+
+	inTransitAt, err := h.escrowService.StartTransit(r.Context(), agentID, req.WaybillID)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrWaybillNotFound):
+			writeError(w, http.StatusNotFound, "waybill not found")
+		case errors.Is(err, repository.ErrNotWaybillOwner):
+			writeError(w, http.StatusForbidden, "waybill does not belong to this agent")
+		case errors.Is(err, repository.ErrCannotStartTransit):
+			writeError(w, http.StatusConflict, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to start waybill transit")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"waybill_id":    req.WaybillID,
+		"state":         domain.WaybillStateInTransit,
+		"in_transit_at": inTransitAt,
+	})
+}
+
+type ReceiverRefusalRequest struct {
+	WaybillID string `json:"waybill_id"`
+	Reason    string `json:"reason"`
+}
+
+func (h *RESTHandler) HandleReportReceiverRefusal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	agentID := security.AgentIDFromContext(r.Context())
+	if agentID == "" {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	var req ReceiverRefusalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.WaybillID = strings.TrimSpace(req.WaybillID)
+	if req.WaybillID == "" {
+		writeError(w, http.StatusBadRequest, "waybill_id is required")
+		return
+	}
+	if !strings.HasPrefix(req.WaybillID, "WB-") {
+		req.WaybillID = "WB-" + req.WaybillID
+	}
+
+	reportedAt, err := h.escrowService.ReportReceiverRefusal(
+		r.Context(), agentID, req.WaybillID, req.Reason,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidReceiverRefusalReason):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, repository.ErrWaybillNotFound):
+			writeError(w, http.StatusNotFound, "waybill not found")
+		case errors.Is(err, repository.ErrNotWaybillOwner):
+			writeError(w, http.StatusForbidden, "waybill does not belong to this agent")
+		case errors.Is(err, repository.ErrCannotReportReceiverRefusal):
+			writeError(w, http.StatusConflict, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to report receiver refusal")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"waybill_id":  req.WaybillID,
+		"state":       domain.WaybillStateDisputeHold,
+		"reason":      strings.TrimSpace(req.Reason),
+		"reported_at": reportedAt,
+		"funds_held":  true,
+		"message":     "Receiver refusal recorded. Funds are held pending dispute resolution.",
+	})
+}
+
+type ResolveHeldWaybillRequest struct {
+	WaybillID string `json:"waybill_id"`
+	Outcome   string `json:"outcome"`
+	Reason    string `json:"reason"`
+}
+
+func (h *RESTHandler) HandleResolveHeldWaybill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !security.IsAdminFromContext(r.Context()) {
+		writeError(w, http.StatusForbidden, "admin access required")
+		return
+	}
+
+	adminID := security.AgentIDFromContext(r.Context())
+	if adminID == "" {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	var req ResolveHeldWaybillRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.WaybillID = strings.TrimSpace(req.WaybillID)
+	if req.WaybillID == "" {
+		writeError(w, http.StatusBadRequest, "waybill_id is required")
+		return
+	}
+	if !strings.HasPrefix(req.WaybillID, "WB-") {
+		req.WaybillID = "WB-" + req.WaybillID
+	}
+	req.Outcome = strings.ToUpper(strings.TrimSpace(req.Outcome))
+
+	result, err := h.escrowService.ResolveHeldWaybill(
+		r.Context(), adminID, req.WaybillID, req.Outcome, req.Reason,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidResolutionReason):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, repository.ErrInvalidResolutionOutcome):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, repository.ErrWaybillNotFound):
+			writeError(w, http.StatusNotFound, "waybill not found")
+		case errors.Is(err, repository.ErrWaybillNotHeld),
+			errors.Is(err, repository.ErrWaybillAlreadyResolved):
+			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, service.ErrPayoutTransferFailed):
+			observability.Error("waybill_resolution_payout_failed", observability.Fields{
+				"waybill_id": req.WaybillID,
+				"error":      err.Error(),
+			})
+			writeError(w, http.StatusBadGateway, "driver payout failed; waybill remains held")
+		default:
+			observability.Error("waybill_resolution_failed", observability.Fields{
+				"waybill_id": req.WaybillID,
+				"error":      err.Error(),
+			})
+			writeError(w, http.StatusInternalServerError, "failed to resolve held waybill")
+		}
+		return
+	}
+
+	response := map[string]any{
+		"waybill_id":  result.WaybillID,
+		"outcome":     result.Outcome,
+		"state":       result.State,
+		"resolved_at": result.ResolvedAt,
+	}
+	if result.Outcome == domain.ResolutionRefundToAgent {
+		response["wallet_balance_kobo"] = result.WalletBalanceKobo
+	} else {
+		response["transfer_reference"] = result.TransferReference
+		response["driver_payout_kobo"] = result.DriverPayoutKobo
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (h *RESTHandler) HandleCancelWaybill(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -621,10 +815,10 @@ func (h *RESTHandler) HandleCancelWaybill(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"message":                "Waybill cancelled; freight returned to wallet",
-		"waybill_id":             req.WaybillID,
-		"state":                  "CANCELLED",
-		"wallet_balance_kobo":    newBal,
+		"message":             "Waybill cancelled; freight returned to wallet",
+		"waybill_id":          req.WaybillID,
+		"state":               "CANCELLED",
+		"wallet_balance_kobo": newBal,
 	})
 }
 
@@ -790,18 +984,20 @@ func (h *RESTHandler) HandleWaybillStatus(w http.ResponseWriter, r *http.Request
 
 	// Safe public response – never expose pin_hash or internal fields
 	writeJSON(w, http.StatusOK, map[string]any{
-		"waybill_id":          wb.ID,
-		"current_state":       wb.CurrentState,
-		"origin_park_id":      wb.OriginParkID,
-		"destination_park_id": wb.DestinationParkID,
-		"total_freight_kobo":  wb.TotalFreightKobo,
-		"total_freight_naira": float64(wb.TotalFreightKobo) / 100.0,
-		"driver_phone":        wb.DriverPhone,
-		"receiver_phone":      wb.ReceiverPhone,
-		"vehicle_reg_number":  wb.VehicleRegNumber,
-		"failed_pin_attempts": wb.FailedPinAttempts,
-		"created_at":          wb.CreatedAt,
-		"updated_at":          wb.UpdatedAt,
+		"waybill_id":                   wb.ID,
+		"current_state":                wb.CurrentState,
+		"origin_park_id":               wb.OriginParkID,
+		"destination_park_id":          wb.DestinationParkID,
+		"total_freight_kobo":           wb.TotalFreightKobo,
+		"total_freight_naira":          float64(wb.TotalFreightKobo) / 100.0,
+		"driver_phone":                 wb.DriverPhone,
+		"receiver_phone":               wb.ReceiverPhone,
+		"vehicle_reg_number":           wb.VehicleRegNumber,
+		"failed_pin_attempts":          wb.FailedPinAttempts,
+		"receiver_refusal_reason":      wb.ReceiverRefusalReason,
+		"receiver_refusal_reported_at": wb.ReceiverRefusalReportedAt,
+		"created_at":                   wb.CreatedAt,
+		"updated_at":                   wb.UpdatedAt,
 	})
 }
 

@@ -82,6 +82,8 @@ export type WaybillStatus = {
   receiver_phone: string;
   vehicle_reg_number: string;
   failed_pin_attempts: number;
+  receiver_refusal_reason?: string;
+  receiver_refusal_reported_at?: string;
   created_at: string;
   updated_at: string;
 };
@@ -318,6 +320,36 @@ export function getAgentWaybills(): Promise<AgentWaybill[]> {
 export function getWaybillStatus(waybillId: string): Promise<WaybillStatus> {
   const params = new URLSearchParams({ id: waybillId });
   return apiRequest<WaybillStatus>(`/api/v1/waybills/status?${params}`);
+}
+
+export function startWaybillTransit(waybillId: string): Promise<{
+  waybill_id: string;
+  state: string;
+  in_transit_at: string;
+}> {
+  return apiRequest("/api/v1/waybills/start-transit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ waybill_id: waybillId }),
+  });
+}
+
+export function reportReceiverRefusal(
+  waybillId: string,
+  reason: string,
+): Promise<{
+  waybill_id: string;
+  state: string;
+  reason: string;
+  reported_at: string;
+  funds_held: boolean;
+  message: string;
+}> {
+  return apiRequest("/api/v1/waybills/report-refusal", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ waybill_id: waybillId, reason }),
+  });
 }
 
 export function createWaybill(
