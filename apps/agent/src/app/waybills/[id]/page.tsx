@@ -14,6 +14,7 @@ import {
   startWaybillTransit,
   type WaybillStatus,
 } from "@/lib/api";
+import { CancelWaybillButton } from "@/components/cancel-waybill-button";
 import { formatDate, formatNaira, formatPark, formatStatus, userErrorMessage } from "@/lib/format";
 
 export default function WaybillDetailPage() {
@@ -214,6 +215,12 @@ export default function WaybillDetailPage() {
                 >
                   {startingTransit ? "Starting transit..." : "Start transit"}
                 </button>
+                <div className="mt-3">
+                  <CancelWaybillButton
+                    waybillId={waybill.waybill_id}
+                    onSuccess={loadWaybill}
+                  />
+                </div>
               </div>
             ) : null}
             {waybill.current_state === "IN_TRANSIT" ? (

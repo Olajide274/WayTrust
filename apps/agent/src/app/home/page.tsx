@@ -15,6 +15,7 @@ import {
   type AgentProfile,
   type Park,
 } from "@/lib/api";
+import { CancelWaybillButton } from "@/components/cancel-waybill-button";
 import { formatNaira, formatPark, formatStatus, userErrorMessage } from "@/lib/format";
 
 export default function HomePage() {
@@ -80,6 +81,13 @@ export default function HomePage() {
       setWaybillsLoading(false);
     }
   }, [router]);
+
+  useEffect(() => {
+    window.addEventListener(PROFILE_REFRESH_EVENT, loadWaybills);
+    return () => {
+      window.removeEventListener(PROFILE_REFRESH_EVENT, loadWaybills);
+    };
+  }, [loadWaybills]);
 
   useEffect(() => {
     if (!localStorage.getItem("nurtw_token")) {
@@ -305,6 +313,11 @@ export default function HomePage() {
                         View details
                       </p>
                     </Link>
+                    {waybill.current_state === "ESCROW_LOCKED" ? (
+                      <div className="mt-3">
+                        <CancelWaybillButton waybillId={waybill.id} />
+                      </div>
+                    ) : null}
                   </li>
                 );
               })}

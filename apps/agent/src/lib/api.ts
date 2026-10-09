@@ -137,6 +137,18 @@ export type CreatedWaybill = {
   agent_remaining_balance_kobo: number;
 };
 
+export type CancelWaybillInput = {
+  waybill_id: string;
+  idempotency_key: string;
+};
+
+export type CancelledWaybill = {
+  message: string;
+  waybill_id: string;
+  state: "CANCELLED";
+  wallet_balance_kobo: number;
+};
+
 type CreateWaybillResponse = {
   WaybillID: string;
   SecretPin: string;
@@ -355,6 +367,16 @@ export function getAgentWaybills(): Promise<AgentWaybill[]> {
 export function getWaybillStatus(waybillId: string): Promise<WaybillStatus> {
   const params = new URLSearchParams({ id: waybillId });
   return apiRequest<WaybillStatus>(`/api/v1/waybills/status?${params}`);
+}
+
+export function cancelWaybill(
+  input: CancelWaybillInput,
+): Promise<CancelledWaybill> {
+  return apiRequest<CancelledWaybill>("/api/v1/waybills/cancel", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
 }
 
 export function startWaybillTransit(waybillId: string): Promise<{
