@@ -924,26 +924,18 @@ func (h *RESTHandler) HandleCancelWaybill(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var currentState string
-	err := h.db.QueryRowContext(
-		r.Context(),
-		`SELECT current_state FROM waybills WHERE id = $1 AND agent_id = $2`,
-		req.WaybillID,
-		agentID,
-	).Scan(&currentState)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusInternalServerError, "failed to check waybill state")
-		return
-	}
-	if err == nil && currentState == domain.WaybillStateCancelled {
-		writeError(w, http.StatusConflict, "waybill is already cancelled")
-		return
-	}
-
 	newBal, err := h.escrowService.CancelWaybill(r.Context(), agentID, req.WaybillID, req.IdempotencyKey)
 	if err != nil {
-		// map repository errors if you do that elsewhere
-		writeError(w, http.StatusBadRequest, err.Error())
+		switch {
+		case errors.Is(err, repository.ErrWaybillNotFound):
+			writeError(w, http.StatusNotFound, "waybill not found")
+		case errors.Is(err, repository.ErrNotWaybillOwner):
+			writeError(w, http.StatusForbidden, "waybill does not belong to this agent")
+		case errors.Is(err, repository.ErrCannotCancel):
+			writeError(w, http.StatusConflict, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to cancel waybill")
+		}
 		return
 	}
 
