@@ -8,7 +8,7 @@ import {
   getSettlementSummary,
   type SettlementSummary,
 } from "@/lib/api";
-import { userErrorMessage } from "@/lib/format";
+import { formatNaira, userErrorMessage } from "@/lib/format";
 
 const groups = [
   { key: "paid", label: "Paid" },
@@ -94,7 +94,7 @@ export default function SettlementSummaryPage() {
             Settlement summary
           </h1>
           <p className="mt-2 text-sm text-slate-600">
-            All amounts are in kobo. Date filters use disbursement date for paid
+            All amounts are in naira (₦). Date filters use disbursement date for paid
             waybills and creation date for pending, held, and refunded waybills.
           </p>
         </header>
@@ -186,7 +186,7 @@ export default function SettlementSummaryPage() {
                             {stakeholderLabel}
                           </dt>
                           <dd className="mt-1 font-semibold text-slate-900">
-                            {totals[stakeholderKey].toLocaleString("en-NG")} kobo
+                            {formatNaira(totals[stakeholderKey])}
                           </dd>
                         </div>
                       ))}

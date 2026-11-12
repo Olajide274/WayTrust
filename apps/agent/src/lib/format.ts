@@ -55,7 +55,7 @@ export function formatStatus(state: string): {
   }
 }
 
-export function formatNaira(kobo: number): string {
+export function formatNaira(kobo: number | null | undefined): string {
   return (Number(kobo || 0) / 100).toLocaleString("en-NG", {
     style: "currency",
     currency: "NGN",
