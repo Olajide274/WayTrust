@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -19,12 +20,14 @@ import (
 )
 
 type RESTHandler struct {
-	db            *sql.DB
-	repo          *repository.EscrowRepository
-	escrowService *service.EscrowService
-	nibssResolver resolver.BankAccountResolver
-	smsDispatcher resolver.SMSDispatcher
-	rateLimiter   security.PinRateLimiter
+	db              *sql.DB
+	repo            *repository.EscrowRepository
+	escrowService   *service.EscrowService
+	nibssResolver   resolver.BankAccountResolver
+	smsDispatcher   resolver.SMSDispatcher
+	rateLimiter     security.PinRateLimiter
+	getWaybillOwner func(context.Context, string) (string, error)
+	disbursePayout  func(context.Context, string, string) (*service.DisbursePayoutResult, error)
 }
 
 func NewRESTHandler(
@@ -42,6 +45,14 @@ func NewRESTHandler(
 		nibssResolver: res,
 		smsDispatcher: sms,
 		rateLimiter:   limiter,
+		getWaybillOwner: func(ctx context.Context, waybillID string) (string, error) {
+			waybill, err := repo.GetWaybill(ctx, waybillID)
+			if err != nil {
+				return "", err
+			}
+			return waybill.AgentID, nil
+		},
+		disbursePayout: svc.DisbursePayout,
 	}
 }
 
@@ -693,6 +704,18 @@ type StartTransitRequest struct {
 	WaybillID string `json:"waybill_id"`
 }
 
+func authorizeWaybillDisbursement(w http.ResponseWriter, r *http.Request, ownerID string) bool {
+	if security.IsAdminFromContext(r.Context()) {
+		return true
+	}
+	if agentID := security.AgentIDFromContext(r.Context()); agentID != "" && agentID == ownerID {
+		return true
+	}
+
+	writeError(w, http.StatusForbidden, repository.ErrNotWaybillOwner.Error())
+	return false
+}
+
 func (h *RESTHandler) HandleStartTransit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -964,7 +987,35 @@ func (h *RESTHandler) HandleDisburse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := h.escrowService.DisbursePayout(r.Context(), req.WaybillID, req.IdempotencyKey)
+	agentID := security.AgentIDFromContext(r.Context())
+	if agentID == "" {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	ownerID := ""
+	if !security.IsAdminFromContext(r.Context()) {
+		var err error
+		ownerID, err = h.getWaybillOwner(r.Context(), req.WaybillID)
+		if errors.Is(err, repository.ErrWaybillNotFound) {
+			// Keep unknown and other agents' waybills indistinguishable to agents.
+			writeError(w, http.StatusForbidden, repository.ErrNotWaybillOwner.Error())
+			return
+		}
+		if err != nil {
+			observability.Error("waybill_disburse_owner_lookup_failed", observability.Fields{
+				"waybill_id": req.WaybillID,
+				"error":      err.Error(),
+			})
+			writeError(w, http.StatusInternalServerError, "failed to verify waybill ownership")
+			return
+		}
+	}
+	if !authorizeWaybillDisbursement(w, r, ownerID) {
+		return
+	}
+
+	res, err := h.disbursePayout(r.Context(), req.WaybillID, req.IdempotencyKey)
 	if err != nil {
 		if errors.Is(err, service.ErrPayoutInProgress) {
 			writeJSON(w, http.StatusConflict, map[string]string{
@@ -990,6 +1041,10 @@ func (h *RESTHandler) HandleDisburse(w http.ResponseWriter, r *http.Request) {
 		})
 		if errors.Is(err, repository.ErrAlreadyDisbursed) {
 			writeError(w, http.StatusConflict, "Waybill has already been disbursed")
+			return
+		}
+		if errors.Is(err, repository.ErrWaybillNotFound) {
+			writeError(w, http.StatusNotFound, "waybill not found")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
