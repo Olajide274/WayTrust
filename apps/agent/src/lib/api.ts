@@ -69,6 +69,21 @@ export type Park = {
 
 let parksRequest: Promise<Park[]> | null = null;
 
+export type CreateParkInput = {
+  id: string;
+  name: string;
+  city: string;
+  state: string;
+};
+
+export type CreatedPark = {
+  message: string;
+  park: Park & {
+    state: string;
+    is_active: boolean;
+  };
+};
+
 export type AgentWaybill = {
   id: string;
   agent_id: string;
@@ -395,6 +410,20 @@ export function getParks(): Promise<Park[]> {
     });
   }
   return parksRequest;
+}
+
+export async function createPark(input: CreateParkInput): Promise<CreatedPark> {
+  const response = await apiRequest<CreatedPark>(
+    "/api/v1/parks/create",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    { expectedStatus: 201 },
+  );
+  parksRequest = null;
+  return response;
 }
 
 export function getAgentWaybills(): Promise<AgentWaybill[]> {
