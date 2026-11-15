@@ -149,10 +149,35 @@ export type CancelledWaybill = {
   wallet_balance_kobo: number;
 };
 
+export type DisburseWaybillInput = {
+  waybill_id: string;
+  idempotency_key: string;
+};
+
+export type DisbursedWaybill = {
+  waybillId: string;
+  transferReference: string;
+  driverPayoutKobo: number;
+  agentCommissionKobo: number;
+  unionDuesKobo: number;
+  platformTreasuryKobo: number;
+  disbursedAt: string;
+};
+
 type CreateWaybillResponse = {
   WaybillID: string;
   SecretPin: string;
   AgentRemainingBalance: number;
+};
+
+type DisburseWaybillResponse = {
+  WaybillID: string;
+  TransferReference: string;
+  DriverPayoutKobo: number;
+  AgentCommissionKobo: number;
+  UnionDuesKobo: number;
+  PlatformTreasuryKobo: number;
+  DisbursedAt: string;
 };
 
 export const PROFILE_REFRESH_EVENT = "nurtw:profile-refresh";
@@ -203,7 +228,10 @@ function getErrorMessage(payload: unknown, fallback: string): string {
 export async function apiRequest<T>(
   path: string,
   init: RequestInit = {},
-  options: { clearAuthOnUnauthorized?: boolean } = {},
+  options: {
+    clearAuthOnUnauthorized?: boolean;
+    expectedStatus?: number;
+  } = {},
 ): Promise<T> {
   const headers = new Headers(init.headers);
   const token =
@@ -236,7 +264,11 @@ export async function apiRequest<T>(
     }
   }
 
-  if (!response.ok) {
+  if (
+    !response.ok ||
+    (options.expectedStatus !== undefined &&
+      response.status !== options.expectedStatus)
+  ) {
     if (
       response.status === 401 &&
       options.clearAuthOnUnauthorized !== false &&
@@ -247,7 +279,12 @@ export async function apiRequest<T>(
     }
 
     throw new ApiError(
-      getErrorMessage(payload, `Request failed (${response.status})`),
+      getErrorMessage(
+        payload,
+        response.ok
+          ? `Unexpected response status (${response.status})`
+          : `Request failed (${response.status})`,
+      ),
       response.status,
       payload,
     );
@@ -377,6 +414,28 @@ export function cancelWaybill(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
+}
+
+export function disburseWaybill(
+  input: DisburseWaybillInput,
+): Promise<DisbursedWaybill> {
+  return apiRequest<DisburseWaybillResponse>(
+    "/api/v1/waybills/disburse",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    { expectedStatus: 200 },
+  ).then((response) => ({
+    waybillId: response.WaybillID,
+    transferReference: response.TransferReference,
+    driverPayoutKobo: response.DriverPayoutKobo,
+    agentCommissionKobo: response.AgentCommissionKobo,
+    unionDuesKobo: response.UnionDuesKobo,
+    platformTreasuryKobo: response.PlatformTreasuryKobo,
+    disbursedAt: response.DisbursedAt,
+  }));
 }
 
 export function startWaybillTransit(waybillId: string): Promise<{

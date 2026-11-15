@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { PRODUCT_NAME } from "@/lib/branding";
 import {
   ApiError,
+  disburseWaybill,
   getWaybillStatus,
   getParks,
   hasAuthToken,
@@ -20,6 +21,7 @@ import { formatDate, formatNaira, formatPark, formatStatus, userErrorMessage } f
 export default function WaybillDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const disburseDialogTitleId = useId();
   const [waybill, setWaybill] = useState<WaybillStatus | null>(null);
   const [parks, setParks] = useState<Awaited<ReturnType<typeof getParks>>>([]);
   const [loading, setLoading] = useState(true);
@@ -30,6 +32,12 @@ export default function WaybillDetailPage() {
   const [refusalError, setRefusalError] = useState("");
   const [reportingRefusal, setReportingRefusal] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [confirmingDisbursement, setConfirmingDisbursement] = useState(false);
+  const [disbursing, setDisbursing] = useState(false);
+  const [disburseNotice, setDisburseNotice] = useState<{
+    kind: "success" | "pending" | "already-paid" | "unconfirmed" | "error";
+    message: string;
+  } | null>(null);
 
   const loadWaybill = useCallback(async () => {
     setLoading(true);
@@ -106,7 +114,66 @@ export default function WaybillDetailPage() {
     }
   }
 
+  async function submitDisbursement() {
+    setDisbursing(true);
+    try {
+      const result = await disburseWaybill({
+        waybill_id: id,
+        idempotency_key: `disburse-${id}`,
+      });
+      setDisburseNotice({
+        kind: "success",
+        message: `Payout confirmed. Driver payout: ${formatNaira(result.driverPayoutKobo)}. Transfer reference: ${result.transferReference}.`,
+      });
+    } catch (requestError) {
+      console.error("Could not disburse waybill payout", requestError);
+      if (requestError instanceof ApiError && requestError.status === 409) {
+        const errorMessage = requestError.message.toLowerCase();
+        if (errorMessage.includes("payout in progress")) {
+          setDisburseNotice({
+            kind: "pending",
+            message: "Payout is in progress, retry later.",
+          });
+        } else if (errorMessage.includes("already been disbursed")) {
+          setDisburseNotice({
+            kind: "already-paid",
+            message: "This waybill has already been paid out.",
+          });
+        } else {
+          setDisburseNotice({
+            kind: "error",
+            message: "Could not disburse payout. Please check the waybill status.",
+          });
+        }
+      } else if (
+        requestError instanceof ApiError &&
+        requestError.status === 502
+      ) {
+        setDisburseNotice({
+          kind: "unconfirmed",
+          message: "Payout could not be confirmed. Waybill is still delivered.",
+        });
+      } else {
+        setDisburseNotice({
+          kind: "error",
+          message: "Could not disburse payout. Please check the waybill status.",
+        });
+      }
+    } finally {
+      setConfirmingDisbursement(false);
+      setDisbursing(false);
+      await loadWaybill();
+    }
+  }
+
   const status = formatStatus(waybill?.current_state || "CREATED");
+  const payoutNoticeClass =
+    disburseNotice?.kind === "success" ||
+    disburseNotice?.kind === "already-paid"
+      ? "border-emerald-100 bg-emerald-50 text-emerald-800"
+      : disburseNotice?.kind === "error"
+        ? "border-red-100 bg-red-50 text-red-700"
+        : "border-amber-200 bg-amber-50 text-amber-900";
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-8">
@@ -122,6 +189,27 @@ export default function WaybillDetailPage() {
         <h1 className="mt-1 text-2xl font-semibold text-slate-900">
           Waybill details
         </h1>
+
+        {disburseNotice ? (
+          <div
+            role={disburseNotice.kind === "error" ? "alert" : "status"}
+            className={`mt-4 rounded-lg border px-3 py-2 text-sm ${payoutNoticeClass}`}
+          >
+            <p>{disburseNotice.message}</p>
+            {(disburseNotice.kind === "pending" ||
+              disburseNotice.kind === "unconfirmed") &&
+            waybill?.current_state === "DELIVERED" ? (
+              <button
+                type="button"
+                onClick={() => void submitDisbursement()}
+                disabled={disbursing}
+                className="mt-2 rounded-lg border border-current px-3 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {disbursing ? "Retrying payout..." : "Retry payout"}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {loading ? (
           <section aria-busy="true" aria-label="Loading waybill details" className="mt-6 space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -223,6 +311,21 @@ export default function WaybillDetailPage() {
                 </div>
               </div>
             ) : null}
+            {waybill.current_state === "DELIVERED" ? (
+              <div className="mt-6 border-t border-slate-100 pt-5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDisburseNotice(null);
+                    setConfirmingDisbursement(true);
+                  }}
+                  disabled={disbursing}
+                  className="w-full rounded-lg bg-emerald-700 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Disburse payout
+                </button>
+              </div>
+            ) : null}
             {waybill.current_state === "IN_TRANSIT" ? (
               <form
                 onSubmit={onReportReceiverRefusal}
@@ -278,6 +381,47 @@ export default function WaybillDetailPage() {
               </div>
             ) : null}
           </section>
+        ) : null}
+        {confirmingDisbursement ? (
+          <div
+            className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center"
+            role="presentation"
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={disburseDialogTitleId}
+              className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl"
+            >
+              <h2
+                id={disburseDialogTitleId}
+                className="text-lg font-semibold text-slate-900"
+              >
+                Disburse payout?
+              </h2>
+              <p className="mt-2 text-sm text-slate-600">
+                This sends the payout for this delivered waybill to the driver.
+              </p>
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setConfirmingDisbursement(false)}
+                  disabled={disbursing}
+                  className="rounded-lg border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  Keep waybill
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void submitDisbursement()}
+                  disabled={disbursing}
+                  className="rounded-lg bg-emerald-700 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {disbursing ? "Disbursing..." : "Confirm payout"}
+                </button>
+              </div>
+            </section>
+          </div>
         ) : null}
       </motion.div>
     </main>
