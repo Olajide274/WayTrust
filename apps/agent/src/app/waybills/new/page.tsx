@@ -316,11 +316,19 @@ export default function NewWaybillPage() {
         router.replace("/");
         return;
       }
-      setError(
-        requestError instanceof ApiError && requestError.status === 402
-          ? "Insufficient wallet balance. Fund the agent wallet before booking this waybill."
-          : userErrorMessage(requestError, "Could not book the waybill. Please try again."),
-      );
+      if (
+        requestError instanceof ApiError &&
+        requestError.status === 400 &&
+        requestError.message === "no corridor policy for this route"
+      ) {
+        setError("no corridor policy for this route");
+      } else {
+        setError(
+          requestError instanceof ApiError && requestError.status === 402
+            ? "Insufficient wallet balance. Fund the agent wallet before booking this waybill."
+            : userErrorMessage(requestError, "Could not book the waybill. Please try again."),
+        );
+      }
     } finally {
       setSubmitting(false);
     }
