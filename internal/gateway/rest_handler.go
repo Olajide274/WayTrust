@@ -567,7 +567,11 @@ func (h *RESTHandler) HandleCreateWaybill(w http.ResponseWriter, r *http.Request
 	// Dynamically query PostgreSQL for active corridor policy
 	policy, err := h.repo.GetCorridorPolicy(r.Context(), req.OriginParkID, req.DestinationParkID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("No active fee policy configured for route: %v", err))
+		if errors.Is(err, repository.ErrNoCorridorPolicy) {
+			writeError(w, http.StatusBadRequest, repository.ErrNoCorridorPolicy.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to fetch corridor policy")
 		return
 	}
 

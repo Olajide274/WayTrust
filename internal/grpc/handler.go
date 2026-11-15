@@ -47,7 +47,10 @@ func (h *WaybillGRPCHandler) CreateWaybill(
 	// Dynamically query PostgreSQL for corridor fee policy matching origin and destination parks
 	policy, err := h.repo.GetCorridorPolicy(ctx, req.OriginParkId, req.DestinationParkId)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "corridor policy not found for route: %v", err)
+		if errors.Is(err, repository.ErrNoCorridorPolicy) {
+			return nil, status.Error(codes.NotFound, repository.ErrNoCorridorPolicy.Error())
+		}
+		return nil, status.Errorf(codes.Internal, "failed to fetch corridor policy: %v", err)
 	}
 
 	dto := service.CreateWaybillDTO{

@@ -23,6 +23,7 @@ var (
 	ErrWaybillNotHeld              = errors.New("waybill is not in a resolvable held state")
 	ErrWaybillAlreadyResolved      = errors.New("waybill has already been resolved")
 	ErrInvalidResolutionOutcome    = errors.New("invalid waybill resolution outcome")
+	ErrNoCorridorPolicy            = errors.New("no corridor policy for this route")
 )
 
 type HeldWaybillPayout func(context.Context, string, string, string, int64, string) (string, error)
@@ -812,30 +813,9 @@ func (r *EscrowRepository) GetCorridorPolicy(ctx context.Context, originParkID, 
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			// Fallback: Default to first active corridor policy configured in database
-			fallbackQuery := `
-				SELECT 
-					id, corridor_name, model, threshold_kobo,
-					platform_basis_points, platform_floor_kobo,
-					agent_basis_points, agent_fixed_kobo,
-					union_basis_points, union_fixed_kobo
-				FROM corridor_policies
-				WHERE is_active = TRUE
-				ORDER BY created_at ASC
-				LIMIT 1
-			`
-			err = r.db.QueryRowContext(ctx, fallbackQuery).Scan(
-				&p.ID, &p.CorridorName, &modelStr, &p.ThresholdKobo,
-				&p.PlatformBasisPoints, &p.PlatformFloorKobo,
-				&p.AgentBasisPoints, &p.AgentFixedKobo,
-				&p.UnionBasisPoints, &p.UnionFixedKobo,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("no active corridor fee policy found in database: %w", err)
-			}
-		} else {
-			return nil, fmt.Errorf("database error fetching corridor policy: %w", err)
+			return nil, ErrNoCorridorPolicy
 		}
+		return nil, fmt.Errorf("database error fetching corridor policy: %w", err)
 	}
 
 	p.Model = domain.PricingModel(modelStr)
